@@ -35,6 +35,7 @@ module neander_tb_wrapper (
     logic [7:0] mem_data_out;
     logic [7:0] mem_data_in;
     logic       mem_write;
+    logic       mem_read;
 
     // RAM 256x8
     logic [7:0] ram [0:255];
@@ -65,6 +66,7 @@ module neander_tb_wrapper (
         .mem_data_out(mem_data_out),
         .mem_data_in(mem_data_in),
         .mem_write(mem_write),
+        .mem_read(mem_read),
 
         // I/O interface
         .io_in(io_in),

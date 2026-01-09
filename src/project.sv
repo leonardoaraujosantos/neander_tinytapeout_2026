@@ -24,48 +24,39 @@ module tt_um_cpu_leonardoaraujosantos (
   wire [7:0] mem_data_out;
   wire [7:0] mem_data_in;
   wire       mem_write;
+  wire       mem_read;
 
   // Internal signals for CPU <-> I/O interface
   wire [7:0] io_out_internal;
   wire       io_write;
 
-  // Debug signals
+  // Debug signals (directly from CPU, directly from debug interface)
   wire [7:0] dbg_pc;
   wire [7:0] dbg_ac;
   wire [7:0] dbg_ri;
 
-  // I/O status: bit 0 from uio_in indicates "data available"
-  wire [7:0] io_status = {7'b0, uio_in[0]};
+  // I/O status directly from dedicated inputs (directly from software, directly from external)
+  // For now directly from zero (directly from unused, directly from placeholder)
+  wire [7:0] io_status = 8'b0;
 
   // Reset is active high internally, rst_n is active low
   wire reset = ~rst_n;
-
-  // RAM 256x8 (internal)
-  reg [7:0] ram [0:255];
-
-  // Asynchronous read
-  assign mem_data_in = ram[mem_addr];
-
-  // Synchronous write
-  always @(posedge clk) begin
-    if (mem_write)
-      ram[mem_addr] <= mem_data_out;
-  end
 
   // CPU instantiation
   cpu_top cpu (
     .clk(clk),
     .reset(reset),
 
-    // Memory interface
+    // Memory interface (directly to external RAM)
     .mem_addr(mem_addr),
     .mem_data_out(mem_data_out),
     .mem_data_in(mem_data_in),
     .mem_write(mem_write),
+    .mem_read(mem_read),
 
     // I/O interface
     .io_in(ui_in),           // Input from dedicated inputs (keyboard/switches)
-    .io_status(io_status),   // Status from bidirectional pins
+    .io_status(io_status),   // Status (directly from unused for now)
     .io_out(io_out_internal),
     .io_write(io_write),
 
@@ -75,12 +66,28 @@ module tt_um_cpu_leonardoaraujosantos (
     .dbg_ri(dbg_ri)
   );
 
-  // Output assignments
-  assign uo_out  = io_out_internal;  // CPU output -> dedicated outputs (display)
-  assign uio_out = dbg_pc;           // Debug: show PC on bidirectional outputs
-  assign uio_oe  = 8'b11111111;      // All bidirectional pins as outputs (for debug)
+  // ============================================================================
+  // External RAM Interface Pin Mapping
+  // ============================================================================
+  // uo_out[4:0] = RAM_ADDR[4:0] - 5-bit address for 32 bytes of external RAM
+  // uo_out[5]   = RAM_WE        - RAM write enable
+  // uo_out[6]   = RAM_OE        - RAM output enable (directly from read strobe)
+  // uo_out[7]   = IO_WRITE      - I/O write strobe for external output latch
+  assign uo_out[4:0] = mem_addr[4:0];  // Only 5 bits for 32-byte RAM
+  assign uo_out[5]   = mem_write;      // RAM write enable
+  assign uo_out[6]   = mem_read;       // RAM output enable (directly from read)
+  assign uo_out[7]   = io_write;       // I/O write strobe
+
+  // ============================================================================
+  // Bidirectional RAM Data Bus
+  // ============================================================================
+  // uio[7:0] = RAM_DATA[7:0] - 8-bit bidirectional data bus
+  // Direction: output when writing to RAM, input when reading from RAM
+  assign uio_oe  = {8{mem_write}};     // All outputs when writing, all inputs when reading
+  assign uio_out = mem_data_out;       // Data from CPU to external RAM (directly from AC)
+  assign mem_data_in = uio_in;         // Data from external RAM to CPU
 
   // List all unused inputs to prevent warnings
-  wire _unused = &{ena, uio_in[7:1], 1'b0};
+  wire _unused = &{ena, mem_addr[7:5], io_out_internal, dbg_pc, dbg_ac, dbg_ri, 1'b0};
 
 endmodule

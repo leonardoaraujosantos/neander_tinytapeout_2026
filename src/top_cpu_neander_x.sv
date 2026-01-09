@@ -11,6 +11,7 @@ module cpu_top (
     output logic [7:0] mem_data_out,
     input  logic [7:0] mem_data_in,
     output logic       mem_write,
+    output logic       mem_read,
 
     // Interface com I/O
     input  logic [7:0] io_in,
@@ -24,7 +25,6 @@ module cpu_top (
     output logic [7:0] dbg_ri
 );
 
-    logic       mem_read;
     logic       pc_inc, pc_load;
     logic       ac_load, ri_load, rem_load, rdm_load, nz_load;
     logic       addr_sel_pc;

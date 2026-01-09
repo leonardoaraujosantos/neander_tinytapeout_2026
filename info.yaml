@@ -26,35 +26,35 @@ project:
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
-  # Inputs
-  ui[0]: ""
-  ui[1]: ""
-  ui[2]: ""
-  ui[3]: ""
-  ui[4]: ""
-  ui[5]: ""
-  ui[6]: ""
-  ui[7]: ""
+  # Inputs - I/O Input Port (directly connected to CPU io_in for switches/keyboard)
+  ui[0]: "IO_IN[0]"
+  ui[1]: "IO_IN[1]"
+  ui[2]: "IO_IN[2]"
+  ui[3]: "IO_IN[3]"
+  ui[4]: "IO_IN[4]"
+  ui[5]: "IO_IN[5]"
+  ui[6]: "IO_IN[6]"
+  ui[7]: "IO_IN[7]"
 
-  # Outputs
-  uo[0]: ""
-  uo[1]: ""
-  uo[2]: ""
-  uo[3]: ""
-  uo[4]: ""
-  uo[5]: ""
-  uo[6]: ""
-  uo[7]: ""
+  # Outputs - RAM Address (5-bit for 32 bytes) and Control Signals
+  uo[0]: "RAM_ADDR[0]"
+  uo[1]: "RAM_ADDR[1]"
+  uo[2]: "RAM_ADDR[2]"
+  uo[3]: "RAM_ADDR[3]"
+  uo[4]: "RAM_ADDR[4]"
+  uo[5]: "RAM_WE"
+  uo[6]: "RAM_OE"
+  uo[7]: "IO_WRITE"
 
-  # Bidirectional pins
-  uio[0]: ""
-  uio[1]: ""
-  uio[2]: ""
-  uio[3]: ""
-  uio[4]: ""
-  uio[5]: ""
-  uio[6]: ""
-  uio[7]: ""
+  # Bidirectional pins - RAM Data Bus (directly from/to CPU mem_data)
+  uio[0]: "RAM_DATA[0]"
+  uio[1]: "RAM_DATA[1]"
+  uio[2]: "RAM_DATA[2]"
+  uio[3]: "RAM_DATA[3]"
+  uio[4]: "RAM_DATA[4]"
+  uio[5]: "RAM_DATA[5]"
+  uio[6]: "RAM_DATA[6]"
+  uio[7]: "RAM_DATA[7]"
 
 # Do not change!
 yaml_version: 6
