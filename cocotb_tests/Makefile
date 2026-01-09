@@ -5,7 +5,10 @@
 SIM ?= icarus
 TOPLEVEL_LANG ?= verilog
 
-# Source files
+# Source files (order matters for Icarus Verilog)
+VERILOG_SOURCES += $(PWD)/../src/neander_x_alu.sv
+VERILOG_SOURCES += $(PWD)/../src/neander_x_datapath.sv
+VERILOG_SOURCES += $(PWD)/../src/neander_x_control_unit.sv
 VERILOG_SOURCES += $(PWD)/../src/top_cpu_neander_x.sv
 VERILOG_SOURCES += $(PWD)/neander_tb_wrapper.sv
 

@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = project.v
+PROJECT_SOURCES = neander_x_alu.sv neander_x_datapath.sv neander_x_control_unit.sv top_cpu_neander_x.sv project.sv
 
 ifneq ($(GATES),yes)
 
@@ -31,6 +31,11 @@ endif
 
 # Allow sharing configuration between design and testbench via `include`:
 COMPILE_ARGS 		+= -I$(SRC_DIR)
+
+# SystemVerilog support
+ifeq ($(SIM),icarus)
+    COMPILE_ARGS += -g2012
+endif
 
 # Include the testbench sources:
 VERILOG_SOURCES += $(PWD)/tb.v
