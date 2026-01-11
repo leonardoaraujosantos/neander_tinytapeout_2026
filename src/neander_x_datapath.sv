@@ -42,6 +42,31 @@ module pc_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
+// SP Register (Stack Pointer: Increment, Decrement & Load)
+// Initialized to 0xFF (stack grows downward from top of memory)
+// ---------------------------------------------------------------------------
+module sp_reg (
+    input  logic       clk,
+    input  logic       reset,
+    input  logic       sp_inc,
+    input  logic       sp_dec,
+    input  logic       sp_load,
+    input  logic [7:0] data_in,
+    output logic [7:0] sp_value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            sp_value <= 8'hFF;  // Stack starts at top of memory
+        else if (sp_load)
+            sp_value <= data_in;
+        else if (sp_dec)
+            sp_value <= sp_value - 8'h01;  // PUSH: decrement first, then write
+        else if (sp_inc)
+            sp_value <= sp_value + 8'h01;  // POP: read first, then increment
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
 // NZ Register (Flags)
 // ---------------------------------------------------------------------------
 module nz_reg (
@@ -66,15 +91,23 @@ module nz_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
-// MUX PC/RDM -> REM
+// MUX PC/RDM/SP -> REM (3-way address mux)
 // ---------------------------------------------------------------------------
-module mux_pc_rdm (
-    input  logic       sel, // 1 = PC, 0 = RDM
+module mux_addr (
+    input  logic [1:0] sel, // 00 = RDM, 01 = PC, 10 = SP
     input  logic [7:0] pc,
     input  logic [7:0] rdm,
+    input  logic [7:0] sp,
     output logic [7:0] out
 );
-    assign out = sel ? pc : rdm;
+    always_comb begin
+        case (sel)
+            2'b00:   out = rdm;
+            2'b01:   out = pc;
+            2'b10:   out = sp;
+            default: out = rdm;
+        endcase
+    end
 endmodule
 
 // ============================================================================
@@ -94,8 +127,11 @@ module neander_datapath (
     input  logic       rem_load,
     input  logic       rdm_load,
     input  logic       nz_load,
-    input  logic       addr_sel_pc,
+    input  logic [1:0] addr_sel,  // 00=RDM, 01=PC, 10=SP
     input  logic [1:0] alu_op,
+    input  logic       sp_inc,    // Stack pointer increment (POP/RET)
+    input  logic       sp_dec,    // Stack pointer decrement (PUSH/CALL)
+    input  logic       mem_data_sel, // Memory data select: 0=AC, 1=PC (for CALL)
 
     // External RAM Interface
     input  logic [7:0] mem_data_in,
@@ -111,15 +147,17 @@ module neander_datapath (
 
     // Output to Control Unit / Debug
     output logic [3:0] opcode,
+    output logic [3:0] sub_opcode, // Lower nibble for stack ops
     output logic       flagN,
     output logic       flagZ,
     output logic [7:0] dbg_pc,
     output logic [7:0] dbg_ac,
-    output logic [7:0] dbg_ri
+    output logic [7:0] dbg_ri,
+    output logic [7:0] dbg_sp
 );
 
     // Internal Signals (using 'logic' for everything)
-    logic [7:0] pc, rem, rdm, ri, ac;
+    logic [7:0] pc, rem, rdm, ri, ac, sp;
     logic [7:0] alu_res;
     logic [7:0] addr_mux;
     logic [7:0] ac_in;
@@ -127,15 +165,17 @@ module neander_datapath (
 
     // Direct assignments
     assign mem_addr     = rem;
-    assign mem_data_out = ac;
+    assign mem_data_out = mem_data_sel ? pc : ac;  // MUX: 0=AC (STA/PUSH), 1=PC (CALL)
     assign io_out       = ac;
     assign io_write     = io_write_ctrl;
     assign opcode       = ri[7:4];
+    assign sub_opcode   = ri[3:0];  // Lower nibble for PUSH/POP/CALL/RET
 
     // Debug outputs
     assign dbg_pc = pc;
     assign dbg_ac = ac;
     assign dbg_ri = ri;
+    assign dbg_sp = sp;
 
     // --- Instantiations ---
 
@@ -145,8 +185,14 @@ module neander_datapath (
         .data_in(rdm), .pc_value(pc)
     );
 
-    mux_pc_rdm u_mux (
-        .sel(addr_sel_pc), .pc(pc), .rdm(rdm), .out(addr_mux)
+    sp_reg u_sp (
+        .clk(clk), .reset(reset),
+        .sp_inc(sp_inc), .sp_dec(sp_dec), .sp_load(1'b0),
+        .data_in(8'h00), .sp_value(sp)
+    );
+
+    mux_addr u_mux (
+        .sel(addr_sel), .pc(pc), .rdm(rdm), .sp(sp), .out(addr_mux)
     );
 
     // Reusing generic_reg for standard registers to reduce code size
@@ -174,6 +220,10 @@ module neander_datapath (
     always_comb begin
         if (opcode == 4'h2 || opcode == 4'hE) begin
             // LDA or LDI
+            ac_in = mem_data_in;
+        end
+        else if (opcode == 4'h7 && sub_opcode == 4'h1) begin
+            // POP: load from memory (stack)
             ac_in = mem_data_in;
         end
         else if (opcode == 4'hC) begin
