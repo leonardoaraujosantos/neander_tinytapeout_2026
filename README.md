@@ -11,7 +11,7 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - **I/O Instructions**: IN/OUT for external communication
 - **Immediate Addressing**: LDI for loading constants
 - **Stack Operations**: PUSH/POP/CALL/RET for subroutines
-- **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP for C compiler support
+- **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR, ASR, NEG, CMP, ADC, SBC for C compiler support
 - **X Register**: Index register with LDX, STX, LDXI, TAX, TXA, INX
 - **Y Register**: Second index register with LDY, STY, LDYI, TAY, TYA, INY
 - **Frame Pointer**: FP register with TSF, TFS, PUSH_FP, POP_FP for stack frame management
@@ -26,7 +26,7 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - Three condition flags (N: Negative, Z: Zero, C: Carry)
 - 60+ instructions including:
   - Stack operations (PUSH/POP/CALL/RET)
-  - LCC extension (SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP)
+  - LCC extension (SUB, INC, DEC, XOR, SHL, SHR, ASR, NEG, CMP, ADC, SBC)
   - Carry-based jumps (JC, JNC) for unsigned comparisons
   - Comparison jumps (JLE, JGT, JGE, JBE, JA) for signed/unsigned comparisons
   - X register operations (LDX, STX, LDXI, TAX, TXA, INX)
@@ -34,6 +34,8 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
   - Frame pointer operations (TSF, TFS, PUSH_FP, POP_FP)
   - Indexed addressing modes (LDA/STA with ,X, ,Y, and ,FP)
   - Hardware multiplication (MUL: AC * X -> Y:AC, 16-bit result)
+  - Hardware division (DIV, MOD: AC / X with quotient and remainder)
+  - Multi-byte arithmetic support (ADC, SBC for 16/32-bit operations)
 - FSM-based control unit
 - External memory interface (32 bytes addressable via TinyTapeout pins)
 
@@ -85,8 +87,11 @@ These instructions extend the ALU capabilities to support C compiler code genera
 | 0x75 | INC | AC <- AC + 1 | N, Z |
 | 0x76 | DEC | AC <- AC - 1 | N, Z |
 | 0x77 | XOR addr | AC <- AC ^ MEM[addr] | N, Z |
-| 0x78 | SHL | AC <- AC << 1 | N, Z |
-| 0x79 | SHR | AC <- AC >> 1 | N, Z |
+| 0x78 | SHL | AC <- AC << 1 | N, Z, C |
+| 0x79 | SHR | AC <- AC >> 1 (logical) | N, Z, C |
+| 0x61 | ASR | AC <- AC >> 1 (arithmetic, preserves sign) | N, Z, C |
+| 0x31 | ADC addr | AC <- AC + MEM[addr] + C (add with carry) | N, Z, C |
+| 0x51 | SBC addr | AC <- AC - MEM[addr] - C (subtract with borrow) | N, Z, C |
 
 ### Carry-Based Jump Instructions
 
@@ -230,6 +235,48 @@ func:   PUSH_FP         ; Save caller's FP
     MOD             ; AC = 2 (remainder), Y = 3 (quotient)
 ```
 
+### Multi-Byte Arithmetic (ADC/SBC)
+
+**ADC** (Add with Carry) and **SBC** (Subtract with Borrow) enable 16-bit and 32-bit arithmetic operations by propagating the carry flag between byte operations.
+
+```assembly
+; Example: 16-bit addition (0x0102 + 0x00FF = 0x0201)
+; Operand A: low=0x02 at [A_LO], high=0x01 at [A_HI]
+; Operand B: low=0xFF at [B_LO], high=0x00 at [B_HI]
+; Result:    low at [R_LO], high at [R_HI]
+
+    LDA A_LO        ; Load low byte of A
+    ADD B_LO        ; Add low byte of B (sets carry on overflow)
+    STA R_LO        ; Store low byte result
+    LDA A_HI        ; Load high byte of A
+    ADC B_HI        ; Add high byte of B + carry
+    STA R_HI        ; Store high byte result
+    ; Result: R = 0x0201
+
+; Example: 16-bit subtraction (0x0200 - 0x0001 = 0x01FF)
+    LDI 0           ; Clear AC
+    ADD zero        ; Clear carry flag (ADD 0 clears C)
+    LDA A_LO        ; Load low byte of A (0x00)
+    SBC B_LO        ; Subtract low byte of B (0x01), sets borrow
+    STA R_LO        ; Store low byte (0xFF)
+    LDA A_HI        ; Load high byte of A (0x02)
+    SBC B_HI        ; Subtract high byte (0x00) - borrow
+    STA R_HI        ; Store high byte (0x01)
+    ; Result: R = 0x01FF
+```
+
+**ASR** (Arithmetic Shift Right) preserves the sign bit, essential for signed division by powers of 2:
+
+```assembly
+; Example: Signed division by 2
+    LDI 0xF8        ; AC = -8 (signed)
+    ASR             ; AC = 0xFC = -4 (sign preserved)
+
+; Compare with logical shift (SHR):
+    LDI 0xF8        ; AC = -8 (signed) = 248 (unsigned)
+    SHR             ; AC = 0x7C = 124 (sign NOT preserved)
+```
+
 ## Architecture
 
 ```mermaid
@@ -308,7 +355,7 @@ tt_um_neander (TinyTapeout wrapper)
     │   ├── y_reg (Y Index Register)
     │   ├── mux_addr (3-way Address MUX)
     │   ├── generic_reg (REM, RDM, RI, AC)
-    │   ├── neander_alu (ADD, SUB, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, NEG)
+    │   ├── neander_alu (ADD, ADC, SUB, SBC, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, ASR, NEG)
     │   └── nzc_reg (N, Z, C Flags)
     └── neander_control (FSM)
 ```
@@ -412,6 +459,8 @@ The NEANDER-X processor requires an external 32-byte RAM and optionally an outpu
 - [Project Info (TinyTapeout)](docs/info.md) - Pin interface and testing guide
 - [NEANDER CPU Guide](docs/NEANDER_cpu.md) - Complete architecture and implementation details
 - [Stack Extension](docs/NEANDER_X_STACK.md) - PUSH/POP/CALL/RET documentation
+- [LCC Compiler Backend](docs/LCC_NEANDER_BACKEND.md) - Guide for targeting LCC C compiler to NEANDER-X
+- [LCC Compiler Reference](docs/LCC_COMPILER_COMPLETE.md) - Complete LCC retargeting guide (Portuguese)
 - [GitHub Actions](docs/GITHUB_ACTIONS.md) - CI/CD workflow explanation
 
 ## Quick Start
