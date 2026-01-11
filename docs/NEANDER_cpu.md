@@ -120,16 +120,33 @@ For instructions without operands (NOP, NOT, HLT), only the first byte is used.
 | 0xA | 1010 | JZ addr | IF Z=1 THEN PC <- addr | None |
 | 0xF | 1111 | HLT | Halt execution | None |
 
-### Extended Instructions (Optional)
+### Extended Instructions (Implemented in NeanderX)
 
-The following instructions can be added to enhance the processor:
+The following instructions enhance the processor:
 
 | Opcode (Hex) | Mnemonic | Operation | Description |
 |--------------|----------|-----------|-------------|
+| 0x70 | PUSH | SP <- SP-1; MEM[SP] <- AC | Push AC onto stack |
+| 0x71 | POP | AC <- MEM[SP]; SP <- SP+1 | Pop from stack to AC |
 | 0xB | JNZ addr | IF Z=0 THEN PC <- addr | Jump if not zero |
 | 0xC | IN port | AC <- IO[port] | Input from I/O port |
 | 0xD | OUT port | IO[port] <- AC | Output to I/O port |
 | 0xE | LDI imm | AC <- imm | Load immediate value |
+
+### Stack Operations
+
+The stack pointer (SP) is initialized to 0xFF and grows downward. The stack
+occupies the upper region of memory (addresses 0xFF downward).
+
+**PUSH (0x70):** Decrements SP first, then writes AC to MEM[SP]
+**POP (0x71):** Reads MEM[SP] to AC, then increments SP. Updates N and Z flags.
+
+### Reserved for Future Implementation
+
+| Opcode (Hex) | Mnemonic | Operation | Description |
+|--------------|----------|-----------|-------------|
+| 0x72 | CALL addr | PUSH PC+2; PC <- addr | Call subroutine |
+| 0x73 | RET | POP to PC | Return from subroutine |
 
 ### Instruction Encoding Examples
 

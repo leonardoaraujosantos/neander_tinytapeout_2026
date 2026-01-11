@@ -22,16 +22,20 @@ module cpu_top (
     // Debug
     output logic [7:0] dbg_pc,
     output logic [7:0] dbg_ac,
-    output logic [7:0] dbg_ri
+    output logic [7:0] dbg_ri,
+    output logic [7:0] dbg_sp
 );
 
     logic       pc_inc, pc_load;
     logic       ac_load, ri_load, rem_load, rdm_load, nz_load;
-    logic       addr_sel_pc;
+    logic [1:0] addr_sel;
     logic [1:0] alu_op;
     logic [3:0] opcode;
+    logic [3:0] sub_opcode;
     logic       flagN, flagZ;
     logic       io_write_ctrl;
+    logic       sp_inc, sp_dec;
+    logic       mem_data_sel;
 
     neander_datapath dp (
         .clk(clk),
@@ -46,8 +50,11 @@ module cpu_top (
         .rem_load(rem_load),
         .rdm_load(rdm_load),
         .nz_load(nz_load),
-        .addr_sel_pc(addr_sel_pc),
+        .addr_sel(addr_sel),
         .alu_op(alu_op),
+        .sp_inc(sp_inc),
+        .sp_dec(sp_dec),
+        .mem_data_sel(mem_data_sel),
         .io_write_ctrl(io_write_ctrl),
         // Data/Status I/O
         .mem_data_in(mem_data_in),
@@ -58,17 +65,20 @@ module cpu_top (
         .io_out(io_out),
         .io_write(io_write),
         .opcode(opcode),
+        .sub_opcode(sub_opcode),
         .flagN(flagN),
         .flagZ(flagZ),
         .dbg_pc(dbg_pc),
         .dbg_ac(dbg_ac),
-        .dbg_ri(dbg_ri)
+        .dbg_ri(dbg_ri),
+        .dbg_sp(dbg_sp)
     );
 
     neander_control uc (
         .clk(clk),
         .reset(reset),
         .opcode(opcode),
+        .sub_opcode(sub_opcode),
         .flagN(flagN),
         .flagZ(flagZ),
         .mem_read(mem_read),
@@ -80,9 +90,12 @@ module cpu_top (
         .rem_load(rem_load),
         .rdm_load(rdm_load),
         .nz_load(nz_load),
-        .addr_sel_pc(addr_sel_pc),
+        .addr_sel(addr_sel),
         .alu_op(alu_op),
-        .io_write(io_write_ctrl)
+        .io_write(io_write_ctrl),
+        .sp_inc(sp_inc),
+        .sp_dec(sp_dec),
+        .mem_data_sel(mem_data_sel)
     );
 
 endmodule

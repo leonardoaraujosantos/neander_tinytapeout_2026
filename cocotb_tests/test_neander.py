@@ -31,21 +31,25 @@ from cocotb.triggers import RisingEdge, ClockCycles, Timer
 
 # Neander Opcodes
 class Op:
-    NOP = 0x00
-    STA = 0x10
-    LDA = 0x20
-    ADD = 0x30
-    OR  = 0x40
-    AND = 0x50
-    NOT = 0x60
-    JMP = 0x80
-    JN  = 0x90
-    JZ  = 0xA0
-    JNZ = 0xB0
-    IN  = 0xC0
-    OUT = 0xD0
-    LDI = 0xE0
-    HLT = 0xF0
+    NOP  = 0x00
+    STA  = 0x10
+    LDA  = 0x20
+    ADD  = 0x30
+    OR   = 0x40
+    AND  = 0x50
+    NOT  = 0x60
+    PUSH = 0x70  # Stack PUSH (sub-opcode 0)
+    POP  = 0x71  # Stack POP  (sub-opcode 1)
+    CALL = 0x72  # CALL subroutine (sub-opcode 2)
+    RET  = 0x73  # RET from subroutine (sub-opcode 3)
+    JMP  = 0x80
+    JN   = 0x90
+    JZ   = 0xA0
+    JNZ  = 0xB0
+    IN   = 0xC0
+    OUT  = 0xD0
+    LDI  = 0xE0
+    HLT  = 0xF0
 
 
 class NeanderTestbench:
@@ -1073,5 +1077,572 @@ async def test_all_alu_operations(dut):
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"ALU test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+# ============================================================================
+# STACK INSTRUCTION TESTS (PUSH/POP)
+# ============================================================================
+
+@cocotb.test()
+async def test_push_pop_single(dut):
+    """Test single PUSH and POP operation"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: Load value, push it, load different value, pop original back
+    program = [
+        Op.LDI, 0x42,       # AC = 0x42
+        Op.PUSH, 0x00,      # Push 0x42 onto stack
+        Op.LDI, 0x00,       # AC = 0x00 (clear AC)
+        Op.POP, 0x00,       # Pop back to AC (should be 0x42)
+        Op.OUT, 0x00,       # Output AC
+        Op.HLT, 0x00,
+    ]
+    expected = 0x42
+
+    dut._log.info("Testing single PUSH/POP: push 0x42, clear AC, pop back")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"PUSH/POP test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_push_pop_multiple(dut):
+    """Test multiple PUSH and POP operations (LIFO order)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_R1 = 0x80
+    ADDR_R2 = 0x81
+
+    # Program: Push 3 values, pop them back in reverse order
+    # Push 0x11, 0x22, 0x33, then pop and verify LIFO order
+    program = [
+        Op.LDI, 0x11,       # AC = 0x11
+        Op.PUSH, 0x00,      # Push 0x11
+        Op.LDI, 0x22,       # AC = 0x22
+        Op.PUSH, 0x00,      # Push 0x22
+        Op.LDI, 0x33,       # AC = 0x33
+        Op.PUSH, 0x00,      # Push 0x33
+
+        # Now pop - should get 0x33, 0x22, 0x11
+        Op.POP, 0x00,       # Pop -> AC = 0x33
+        Op.STA, ADDR_R1,    # Store first pop result
+        Op.POP, 0x00,       # Pop -> AC = 0x22
+        Op.STA, ADDR_R2,    # Store second pop result
+        Op.POP, 0x00,       # Pop -> AC = 0x11
+
+        # Output the last popped value (0x11)
+        Op.OUT, 0x00,
+        Op.HLT, 0x00,
+    ]
+    expected = 0x11  # Last value pushed, last to be popped
+
+    dut._log.info("Testing multiple PUSH/POP with LIFO order")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=3000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"Multiple PUSH/POP test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    # Verify intermediate values stored in memory
+    r1 = await tb.read_memory(ADDR_R1)
+    r2 = await tb.read_memory(ADDR_R2)
+    dut._log.info(f"First pop (stored at 0x80): 0x{r1:02X} (expected: 0x33)")
+    dut._log.info(f"Second pop (stored at 0x81): 0x{r2:02X} (expected: 0x22)")
+
+    assert r1 == 0x33, f"First pop should be 0x33, got 0x{r1:02X}"
+    assert r2 == 0x22, f"Second pop should be 0x22, got 0x{r2:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_push_pop_flags(dut):
+    """Test that POP sets N and Z flags correctly"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    JN_TARGET = 0x14
+
+    # Push a negative value (0x80), pop it, and check N flag via JN
+    program = [
+        Op.LDI, 0x80,           # 0x00: AC = 0x80 (negative)
+        Op.PUSH, 0x00,          # 0x02: Push 0x80
+        Op.LDI, 0x00,           # 0x04: AC = 0x00 (clear, to reset flags)
+        Op.POP, 0x00,           # 0x06: Pop -> AC = 0x80, sets N=1
+        Op.JN, JN_TARGET,       # 0x08: Should jump because N=1
+        Op.LDI, 0xFF,           # 0x0A: Skipped if JN works
+        Op.OUT, 0x00,           # 0x0C: Skipped
+        Op.HLT, 0x00,           # 0x0E: Skipped
+        Op.NOP, 0x00,           # 0x10: Padding
+        Op.NOP, 0x00,           # 0x12: Padding
+
+        # JN_TARGET (0x14):
+        Op.LDI, 0xAA,           # 0x14: AC = 0xAA (success marker)
+        Op.OUT, 0x00,           # 0x16: Output success
+        Op.HLT, 0x00,           # 0x18: Halt
+    ]
+    expected = 0xAA
+
+    dut._log.info("Testing POP sets N flag correctly")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"POP N flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_push_pop_zero_flag(dut):
+    """Test that POP sets Z flag correctly when popping zero"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    JZ_TARGET = 0x14
+
+    # Push zero, change AC, pop zero back, check Z flag via JZ
+    program = [
+        Op.LDI, 0x00,           # 0x00: AC = 0x00
+        Op.PUSH, 0x00,          # 0x02: Push 0x00
+        Op.LDI, 0xFF,           # 0x04: AC = 0xFF (non-zero, Z=0)
+        Op.POP, 0x00,           # 0x06: Pop -> AC = 0x00, sets Z=1
+        Op.JZ, JZ_TARGET,       # 0x08: Should jump because Z=1
+        Op.LDI, 0xFF,           # 0x0A: Skipped if JZ works
+        Op.OUT, 0x00,           # 0x0C: Skipped
+        Op.HLT, 0x00,           # 0x0E: Skipped
+        Op.NOP, 0x00,           # 0x10: Padding
+        Op.NOP, 0x00,           # 0x12: Padding
+
+        # JZ_TARGET (0x14):
+        Op.LDI, 0xBB,           # 0x14: AC = 0xBB (success marker)
+        Op.OUT, 0x00,           # 0x16: Output success
+        Op.HLT, 0x00,           # 0x18: Halt
+    ]
+    expected = 0xBB
+
+    dut._log.info("Testing POP sets Z flag correctly")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"POP Z flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_stack_with_subroutine_simulation(dut):
+    """Test using stack to simulate a simple subroutine pattern"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_TEMP = 0x80
+
+    # Simulate saving/restoring AC across operations
+    # 1. Load value, push to save
+    # 2. Do some computation
+    # 3. Pop to restore original value
+    program = [
+        Op.LDI, 0x55,       # AC = 0x55 (original value)
+        Op.PUSH, 0x00,      # Save AC on stack
+
+        # Do some "work" that modifies AC
+        Op.LDI, 0x10,       # AC = 0x10
+        Op.STA, ADDR_TEMP,  # Store temporary
+        Op.LDI, 0x20,       # AC = 0x20
+        Op.ADD, ADDR_TEMP,  # AC = 0x30
+
+        # Restore original AC
+        Op.POP, 0x00,       # AC = 0x55 (restored)
+
+        Op.OUT, 0x00,       # Output restored value
+        Op.HLT, 0x00,
+    ]
+    expected = 0x55
+
+    dut._log.info("Testing stack for save/restore pattern (subroutine simulation)")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"Save/restore test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+# ============================================================================
+# CALL/RET INSTRUCTION TESTS
+# ============================================================================
+
+@cocotb.test()
+async def test_call_ret_simple(dut):
+    """Test simple CALL and RET - call subroutine and return"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Memory layout:
+    # 0x00-0x07: Main program
+    # 0x20-0x27: Subroutine
+    SUBROUTINE_ADDR = 0x20
+
+    # Main program calls subroutine, subroutine sets AC=0x42 and returns
+    program = [
+        # Main program (starts at 0x00)
+        Op.LDI, 0x00,               # 0x00: AC = 0x00
+        Op.CALL, SUBROUTINE_ADDR,   # 0x02: Call subroutine at 0x20
+        Op.OUT, 0x00,               # 0x04: Output AC (should be 0x42 from subroutine)
+        Op.HLT, 0x00,               # 0x06: Halt
+    ]
+
+    # Pad to subroutine address
+    while len(program) < SUBROUTINE_ADDR:
+        program.append(0x00)
+
+    # Subroutine at 0x20
+    program.extend([
+        Op.LDI, 0x42,               # 0x20: AC = 0x42
+        Op.RET, 0x00,               # 0x22: Return to caller
+    ])
+
+    expected = 0x42
+
+    dut._log.info("Testing simple CALL/RET")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=3000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"CALL/RET test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_call_ret_with_parameter(dut):
+    """Test CALL/RET where main passes value, subroutine modifies it"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    SUBROUTINE_ADDR = 0x20
+    ADDR_PARAM = 0x80
+
+    # Main: set AC=10, call subroutine that doubles it, output result
+    program = [
+        # Main program
+        Op.LDI, 0x0A,               # 0x00: AC = 10
+        Op.STA, ADDR_PARAM,         # 0x02: Store parameter
+        Op.CALL, SUBROUTINE_ADDR,   # 0x04: Call double subroutine
+        Op.LDA, ADDR_PARAM,         # 0x06: Load result
+        Op.OUT, 0x00,               # 0x08: Output (should be 20)
+        Op.HLT, 0x00,               # 0x0A: Halt
+    ]
+
+    # Pad to subroutine address
+    while len(program) < SUBROUTINE_ADDR:
+        program.append(0x00)
+
+    # Subroutine: double the value at ADDR_PARAM
+    program.extend([
+        Op.LDA, ADDR_PARAM,         # 0x20: Load parameter
+        Op.ADD, ADDR_PARAM,         # 0x22: Double it (AC = AC + param)
+        Op.STA, ADDR_PARAM,         # 0x24: Store result
+        Op.RET, 0x00,               # 0x26: Return
+    ])
+
+    expected = 20  # 10 * 2
+
+    dut._log.info("Testing CALL/RET with parameter passing")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=3000)
+
+    dut._log.info(f"I/O output received: {result} (expected: {expected})")
+    assert result == expected, f"CALL/RET param test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_nested_calls(dut):
+    """Test nested CALL/RET - main calls sub1, sub1 calls sub2"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    SUB1_ADDR = 0x20
+    SUB2_ADDR = 0x30
+    ADDR_VAR = 0x80
+
+    # Main calls sub1, sub1 calls sub2
+    # sub2 sets AC=5, returns
+    # sub1 adds 10, returns
+    # main outputs result (should be 15)
+    program = [
+        # Main program
+        Op.CALL, SUB1_ADDR,         # 0x00: Call sub1
+        Op.OUT, 0x00,               # 0x02: Output result
+        Op.HLT, 0x00,               # 0x04: Halt
+    ]
+
+    # Pad to sub1 address
+    while len(program) < SUB1_ADDR:
+        program.append(0x00)
+
+    # Sub1: call sub2, then add 10
+    program.extend([
+        Op.CALL, SUB2_ADDR,         # 0x20: Call sub2
+        Op.STA, ADDR_VAR,           # 0x22: Store sub2 result
+        Op.LDI, 0x0A,               # 0x24: AC = 10
+        Op.ADD, ADDR_VAR,           # 0x26: AC = 10 + sub2_result
+        Op.RET, 0x00,               # 0x28: Return
+    ])
+
+    # Pad to sub2 address
+    while len(program) < SUB2_ADDR:
+        program.append(0x00)
+
+    # Sub2: set AC=5 and return
+    program.extend([
+        Op.LDI, 0x05,               # 0x30: AC = 5
+        Op.RET, 0x00,               # 0x32: Return
+    ])
+
+    expected = 15  # 5 + 10
+
+    dut._log.info("Testing nested CALL/RET")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=4000)
+
+    dut._log.info(f"I/O output received: {result} (expected: {expected})")
+    assert result == expected, f"Nested CALL/RET test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_call_ret_preserves_stack(dut):
+    """Test that CALL/RET properly manages stack with PUSH/POP"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    SUBROUTINE_ADDR = 0x20
+
+    # Main: push 0xAA, call subroutine, pop (should get 0xAA back)
+    # Subroutine: push 0xBB, pop (internal use), return
+    program = [
+        # Main program
+        Op.LDI, 0xAA,               # 0x00: AC = 0xAA
+        Op.PUSH, 0x00,              # 0x02: Push 0xAA
+        Op.CALL, SUBROUTINE_ADDR,   # 0x04: Call subroutine
+        Op.POP, 0x00,               # 0x06: Pop (should be 0xAA)
+        Op.OUT, 0x00,               # 0x08: Output
+        Op.HLT, 0x00,               # 0x0A: Halt
+    ]
+
+    # Pad to subroutine address
+    while len(program) < SUBROUTINE_ADDR:
+        program.append(0x00)
+
+    # Subroutine: uses stack internally but cleans up
+    program.extend([
+        Op.LDI, 0xBB,               # 0x20: AC = 0xBB
+        Op.PUSH, 0x00,              # 0x22: Push 0xBB
+        Op.POP, 0x00,               # 0x24: Pop (clean up)
+        Op.RET, 0x00,               # 0x26: Return
+    ])
+
+    expected = 0xAA  # The value we pushed before CALL
+
+    dut._log.info("Testing CALL/RET with PUSH/POP (stack integrity)")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=3000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"Stack integrity test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_multiple_calls_same_subroutine(dut):
+    """Test calling the same subroutine multiple times"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    SUBROUTINE_ADDR = 0x20
+    ADDR_COUNTER = 0x80
+
+    # Main: initialize counter to 0, call increment subroutine 3 times
+    program = [
+        # Main program
+        Op.LDI, 0x00,               # 0x00: AC = 0
+        Op.STA, ADDR_COUNTER,       # 0x02: counter = 0
+        Op.CALL, SUBROUTINE_ADDR,   # 0x04: Call increment (counter = 1)
+        Op.CALL, SUBROUTINE_ADDR,   # 0x06: Call increment (counter = 2)
+        Op.CALL, SUBROUTINE_ADDR,   # 0x08: Call increment (counter = 3)
+        Op.LDA, ADDR_COUNTER,       # 0x0A: Load counter
+        Op.OUT, 0x00,               # 0x0C: Output (should be 3)
+        Op.HLT, 0x00,               # 0x0E: Halt
+    ]
+
+    # Pad to subroutine address
+    while len(program) < SUBROUTINE_ADDR:
+        program.append(0x00)
+
+    # Subroutine: increment counter
+    one_addr = 0x40
+    program.extend([
+        Op.LDA, ADDR_COUNTER,       # 0x20: Load counter
+        Op.ADD, one_addr,           # 0x22: Add 1
+        Op.STA, ADDR_COUNTER,       # 0x24: Store counter
+        Op.RET, 0x00,               # 0x26: Return
+    ])
+
+    # Pad to constant address
+    while len(program) < one_addr:
+        program.append(0x00)
+
+    # Constant 1 at 0x40
+    program.append(0x01)
+
+    expected = 3  # Called 3 times
+
+    dut._log.info("Testing multiple calls to same subroutine")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=5000)
+
+    dut._log.info(f"I/O output received: {result} (expected: {expected})")
+    assert result == expected, f"Multiple calls test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_loop_with_function_call(dut):
+    """
+    Test a for-loop that calls a function f(x) = x + 5 multiple times.
+
+    This is a comprehensive test combining:
+    - Loop with counter and conditional jump
+    - CALL/RET to a subroutine
+    - Subroutine performs f(x) = x + 5
+
+    Program structure:
+        Main:
+            result = 0
+            counter = 4
+        loop:
+            result = add5(result)   ; CALL add5
+            counter = counter - 1
+            if counter != 0: goto loop
+            OUT result
+            HLT
+
+        add5:                       ; Subroutine: f(x) = x + 5
+            AC = AC + 5
+            RET
+
+    Expected: 0 + 5 + 5 + 5 + 5 = 20
+    """
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Memory layout
+    SUBROUTINE_ADDR = 0x30  # add5 subroutine location
+    ADDR_RESULT = 0x80      # Running result
+    ADDR_COUNTER = 0x81     # Loop counter
+    ADDR_NEG_ONE = 0x82     # Constant -1 (0xFF) for decrement
+    ADDR_FIVE = 0x83        # Constant 5 for add5 function
+
+    program = [
+        # Initialize
+        Op.LDI, 0x00,               # 0x00: AC = 0
+        Op.STA, ADDR_RESULT,        # 0x02: result = 0
+        Op.LDI, 0x04,               # 0x04: AC = 4
+        Op.STA, ADDR_COUNTER,       # 0x06: counter = 4
+
+        # Loop starts at 0x08
+        Op.LDA, ADDR_RESULT,        # 0x08: AC = result
+        Op.CALL, SUBROUTINE_ADDR,   # 0x0A: Call add5, AC = result + 5
+        Op.STA, ADDR_RESULT,        # 0x0C: result = AC
+        Op.LDA, ADDR_COUNTER,       # 0x0E: AC = counter
+        Op.ADD, ADDR_NEG_ONE,       # 0x10: AC = counter - 1
+        Op.STA, ADDR_COUNTER,       # 0x12: counter = AC
+        Op.JNZ, 0x08,               # 0x14: If counter != 0, loop
+
+        # Loop done, output result
+        Op.LDA, ADDR_RESULT,        # 0x16: AC = result
+        Op.OUT, 0x00,               # 0x18: Output result
+        Op.HLT, 0x00,               # 0x1A: Halt
+    ]
+
+    # Pad to subroutine address
+    while len(program) < SUBROUTINE_ADDR:
+        program.append(0x00)
+
+    # Subroutine add5: f(x) = x + 5
+    program.extend([
+        Op.ADD, ADDR_FIVE,          # 0x30: AC = AC + 5
+        Op.RET, 0x00,               # 0x32: Return
+    ])
+
+    # Pad to data section
+    while len(program) < ADDR_RESULT:
+        program.append(0x00)
+
+    # Data section
+    program.append(0x00)            # 0x80: result (initialized to 0)
+    program.append(0x00)            # 0x81: counter (will be set to 4)
+    program.append(0xFF)            # 0x82: -1 (two's complement)
+    program.append(0x05)            # 0x83: constant 5
+
+    expected = 20  # 0 + 5 + 5 + 5 + 5 = 20
+
+    dut._log.info("Testing for-loop with CALL to f(x) = x + 5")
+    dut._log.info("Program: loop 4 times calling add5, expected result = 20")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=8000)
+
+    dut._log.info(f"I/O output received: {result} (expected: {expected})")
+    assert result == expected, f"Loop with function call test failed. Expected {expected}, got {result}"
 
     dut._log.info("Test PASSED!")
