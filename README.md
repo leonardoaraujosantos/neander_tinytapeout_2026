@@ -17,6 +17,7 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - **Frame Pointer**: FP register with TSF, TFS, PUSH_FP, POP_FP for stack frame management
 - **Indexed Addressing**: LDA/STA with ,X, ,Y, and ,FP modes for array/pointer/local variable access
 - **Hardware Multiplication**: MUL instruction (AC * X -> Y:AC) with 16-bit result
+- **Hardware Division**: DIV and MOD instructions for integer division and modulo operations
 
 ### Key Features
 
@@ -203,13 +204,31 @@ func:   PUSH_FP         ; Save caller's FP
         RET             ; Return to caller
 ```
 
-### Hardware Multiplication
+### Hardware Multiplication and Division
 
 | Opcode | Mnemonic | Operation | Flags |
 |--------|----------|-----------|-------|
 | 0x09 | MUL | Y:AC <- AC * X (16-bit result) | N, Z, C |
+| 0x0E | DIV | AC <- AC / X (quotient), Y <- remainder | N, Z, C |
+| 0x0F | MOD | AC <- AC % X (remainder), Y <- quotient | N, Z, C |
 
-The MUL instruction multiplies AC by X using a combinational 8x8 multiplier. The 16-bit result is stored with the high byte in Y and the low byte in AC. The carry flag is set if the result overflows 8 bits (high byte != 0).
+**MUL**: Multiplies AC by X using a combinational 8x8 multiplier. The 16-bit result is stored with the high byte in Y and the low byte in AC. The carry flag is set if the result overflows 8 bits (high byte != 0).
+
+**DIV**: Divides AC by X. The quotient is stored in AC and the remainder in Y. On division by zero, the carry flag is set as an error indicator, AC is set to 0xFF, and Y preserves the original dividend.
+
+**MOD**: Computes AC modulo X. The remainder is stored in AC and the quotient in Y. On division by zero, the carry flag is set as an error indicator, AC preserves the original dividend, and Y is set to 0xFF.
+
+```assembly
+; Example: Compute 17 / 5 = 3 remainder 2
+    LDI 17          ; AC = 17
+    LDXI 5          ; X = 5
+    DIV             ; AC = 3 (quotient), Y = 2 (remainder)
+
+; Example: Compute 17 % 5 = 2
+    LDI 17          ; AC = 17
+    LDXI 5          ; X = 5
+    MOD             ; AC = 2 (remainder), Y = 3 (quotient)
+```
 
 ## Architecture
 
@@ -289,7 +308,7 @@ tt_um_neander (TinyTapeout wrapper)
     │   ├── y_reg (Y Index Register)
     │   ├── mux_addr (3-way Address MUX)
     │   ├── generic_reg (REM, RDM, RI, AC)
-    │   ├── neander_alu (ADD, SUB, MUL, AND, OR, XOR, NOT, SHL, SHR, NEG)
+    │   ├── neander_alu (ADD, SUB, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, NEG)
     │   └── nzc_reg (N, Z, C Flags)
     └── neander_control (FSM)
 ```

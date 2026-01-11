@@ -1642,3 +1642,260 @@ async def test_x_register_loop(dut):
     assert io_output == 5, f"Expected 5, got {io_output}"
 
     dut._log.info("Test PASSED: X register loop counter working correctly")
+
+
+# ============================================================================
+# DIV AND MOD INSTRUCTION TESTS
+# ============================================================================
+
+@cocotb.test()
+async def test_div_basic(dut):
+    """Test DIV instruction: 15 / 3 = 5"""
+    dut._log.info("Start DIV Basic Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 15, LDXI 3, DIV, OUT 0, HLT
+    # 15 / 3 = 5 (quotient in AC)
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 15    # AC = 15
+    RAM[0x02] = 0x7C  # LDXI
+    RAM[0x03] = 3     # X = 3
+    RAM[0x04] = 0x0E  # DIV (AC / X -> AC=quotient, Y=remainder)
+    RAM[0x05] = 0x00  # (ignored)
+    RAM[0x06] = 0xD0  # OUT
+    RAM[0x07] = 0x00  # port 0
+    RAM[0x08] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 15, LDXI 3, DIV, OUT (15/3=5)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 5, f"Expected 5, got {io_output}"
+
+    dut._log.info("Test PASSED: DIV instruction working correctly")
+
+
+@cocotb.test()
+async def test_div_with_remainder(dut):
+    """Test DIV instruction with remainder: 17 / 5 = 3 remainder 2"""
+    dut._log.info("Start DIV with Remainder Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 17, LDXI 5, DIV, OUT (quotient), TYA, OUT (remainder), HLT
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 17    # AC = 17
+    RAM[0x02] = 0x7C  # LDXI
+    RAM[0x03] = 5     # X = 5
+    RAM[0x04] = 0x0E  # DIV
+    RAM[0x05] = 0x00
+    RAM[0x06] = 0xD0  # OUT (quotient = 3)
+    RAM[0x07] = 0x00
+    RAM[0x08] = 0x04  # TYA (AC = Y = remainder)
+    RAM[0x09] = 0x00
+    RAM[0x0A] = 0xD0  # OUT (remainder = 2)
+    RAM[0x0B] = 0x00
+    RAM[0x0C] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: 17 / 5 = 3 remainder 2")
+
+    outputs = []
+
+    for cycle in range(400):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            outputs.append(io_output)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert len(outputs) >= 2, f"Expected 2 outputs, got {len(outputs)}"
+    assert outputs[0] == 3, f"Expected quotient 3, got {outputs[0]}"
+    assert outputs[1] == 2, f"Expected remainder 2, got {outputs[1]}"
+
+    dut._log.info("Test PASSED: DIV with remainder working correctly")
+
+
+@cocotb.test()
+async def test_mod_basic(dut):
+    """Test MOD instruction: 17 % 5 = 2"""
+    dut._log.info("Start MOD Basic Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 17, LDXI 5, MOD, OUT 0, HLT
+    # 17 % 5 = 2 (remainder in AC)
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 17    # AC = 17
+    RAM[0x02] = 0x7C  # LDXI
+    RAM[0x03] = 5     # X = 5
+    RAM[0x04] = 0x0F  # MOD (AC % X -> AC=remainder, Y=quotient)
+    RAM[0x05] = 0x00
+    RAM[0x06] = 0xD0  # OUT
+    RAM[0x07] = 0x00
+    RAM[0x08] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 17, LDXI 5, MOD, OUT (17%5=2)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 2, f"Expected 2, got {io_output}"
+
+    dut._log.info("Test PASSED: MOD instruction working correctly")
+
+
+@cocotb.test()
+async def test_mod_no_remainder(dut):
+    """Test MOD instruction: 15 % 3 = 0"""
+    dut._log.info("Start MOD No Remainder Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 15, LDXI 3, MOD, OUT 0, HLT
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 15    # AC = 15
+    RAM[0x02] = 0x7C  # LDXI
+    RAM[0x03] = 3     # X = 3
+    RAM[0x04] = 0x0F  # MOD
+    RAM[0x05] = 0x00
+    RAM[0x06] = 0xD0  # OUT
+    RAM[0x07] = 0x00
+    RAM[0x08] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 15, LDXI 3, MOD, OUT (15%3=0)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0, f"Expected 0, got {io_output}"
+
+    dut._log.info("Test PASSED: MOD no remainder working correctly")
+
+
+@cocotb.test()
+async def test_div_large_values(dut):
+    """Test DIV instruction: 200 / 25 = 8"""
+    dut._log.info("Start DIV Large Values Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 200, LDXI 25, DIV, OUT 0, HLT
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 200   # AC = 200 (0xC8)
+    RAM[0x02] = 0x7C  # LDXI
+    RAM[0x03] = 25    # X = 25
+    RAM[0x04] = 0x0E  # DIV
+    RAM[0x05] = 0x00
+    RAM[0x06] = 0xD0  # OUT
+    RAM[0x07] = 0x00
+    RAM[0x08] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 200, LDXI 25, DIV, OUT (200/25=8)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 8, f"Expected 8, got {io_output}"
+
+    dut._log.info("Test PASSED: DIV large values working correctly")

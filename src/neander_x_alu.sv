@@ -12,6 +12,8 @@
 //   0111: SHR  - a >> 1          (carry = LSB shifted out)
 //   1000: NEG  - 0 - a = -a      (two's complement negation)
 //   1001: MUL  - a * b           (16-bit result: mul_high:result)
+//   1010: DIV  - a / b           (quotient in result, remainder in mul_high)
+//   1011: MOD  - a % b           (remainder in result, quotient in mul_high)
 // ============================================================================
 
 module neander_alu (
@@ -73,6 +75,28 @@ module neander_alu (
                 result = mul_temp[7:0];    // Low byte to AC
                 mul_high = mul_temp[15:8]; // High byte to Y register
                 carry_out = (mul_temp[15:8] != 8'h00);  // Carry set if overflow (high byte non-zero)
+            end
+            4'b1010: begin  // DIV (a / b = quotient, a % b = remainder)
+                if (b != 8'h00) begin
+                    result = a / b;        // Quotient to AC
+                    mul_high = a % b;      // Remainder to Y (reusing mul_high output)
+                    carry_out = 1'b0;      // No error
+                end else begin
+                    result = 8'hFF;        // Division by zero: return max value
+                    mul_high = a;          // Preserve dividend in remainder
+                    carry_out = 1'b1;      // Set carry to indicate division by zero error
+                end
+            end
+            4'b1011: begin  // MOD (a % b = remainder, a / b = quotient)
+                if (b != 8'h00) begin
+                    result = a % b;        // Remainder to AC
+                    mul_high = a / b;      // Quotient to Y (reusing mul_high output)
+                    carry_out = 1'b0;      // No error
+                end else begin
+                    result = a;            // Division by zero: return dividend
+                    mul_high = 8'hFF;      // Max value in quotient
+                    carry_out = 1'b1;      // Set carry to indicate division by zero error
+                end
             end
             default: begin
                 result = 8'h00;

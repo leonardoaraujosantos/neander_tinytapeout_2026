@@ -48,6 +48,9 @@ class Op:
     TFS  = 0x0B  # TFS: SP = FP (transfer FP to SP)
     PUSH_FP = 0x0C  # PUSH_FP: MEM[--SP] = FP
     POP_FP  = 0x0D  # POP_FP: FP = MEM[SP++]
+    # Division Extension (opcode 0x0 family)
+    DIV  = 0x0E  # DIV: AC / X -> AC (quotient), Y (remainder)
+    MOD  = 0x0F  # MOD: AC % X -> AC (remainder), Y (quotient)
     STA  = 0x10
     LDA  = 0x20
     ADD  = 0x30
@@ -3924,6 +3927,379 @@ async def test_mul_power_of_2(dut):
 
     dut._log.info(f"2^8 high byte = 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Power of 2 test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+# =============================================================================
+# DIV AND MOD INSTRUCTION TESTS
+# =============================================================================
+
+@cocotb.test()
+async def test_div_basic(dut):
+    """Test DIV instruction: 15 / 3 = 5 (quotient), remainder = 0"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: Load 15 into AC, 3 into X, divide, output quotient
+    program = [
+        Op.LDI, 15,      # AC = 15
+        Op.LDXI, 3,      # X = 3
+        Op.DIV,          # AC / X -> AC (quotient=5), Y (remainder=0)
+        Op.OUT, 0x00,    # Output AC (quotient)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 5  # 15 / 3 = 5
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"DIV basic: 15 / 3 = {result} (expected: {expected})")
+    assert result == expected, f"DIV basic test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_div_with_remainder(dut):
+    """Test DIV instruction: 17 / 5 = 3 (quotient), remainder = 2"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: 17 / 5 = 3 remainder 2
+    program = [
+        Op.LDI, 17,      # AC = 17
+        Op.LDXI, 5,      # X = 5
+        Op.DIV,          # AC / X -> AC (quotient=3), Y (remainder=2)
+        Op.OUT, 0x00,    # Output AC (quotient)
+        Op.TYA,          # AC = Y (get remainder)
+        Op.OUT, 0x00,    # Output remainder
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    # First output: quotient = 3
+    quotient = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"DIV quotient: 17 / 5 = {quotient} (expected: 3)")
+    assert quotient == 3, f"DIV quotient failed. Expected 3, got {quotient}"
+
+    # Second output: remainder = 2
+    remainder = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"DIV remainder: 17 % 5 = {remainder} (expected: 2)")
+    assert remainder == 2, f"DIV remainder failed. Expected 2, got {remainder}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_div_by_one(dut):
+    """Test DIV instruction: anything / 1 = same value"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    program = [
+        Op.LDI, 42,      # AC = 42
+        Op.LDXI, 1,      # X = 1
+        Op.DIV,          # 42 / 1 = 42, remainder 0
+        Op.OUT, 0x00,    # Output quotient (42)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 42
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"DIV by 1: 42 / 1 = {result} (expected: {expected})")
+    assert result == expected, f"DIV by 1 failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_div_zero_dividend(dut):
+    """Test DIV instruction: 0 / anything = 0"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    program = [
+        Op.LDI, 0,       # AC = 0
+        Op.LDXI, 5,      # X = 5
+        Op.DIV,          # 0 / 5 = 0, remainder 0
+        Op.OUT, 0x00,    # Output quotient (0)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"DIV zero dividend: 0 / 5 = {result} (expected: {expected})")
+    assert result == expected, f"DIV zero dividend failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_div_by_zero_sets_carry(dut):
+    """Test DIV instruction: division by zero sets carry flag"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Division by zero should set carry flag
+    # Address layout:
+    # 0x00-0x01: LDI, 42
+    # 0x02: TAX
+    # 0x03-0x04: LDI, 0
+    # 0x05: TAX
+    # 0x06-0x07: LDI, 42
+    # 0x08: DIV
+    # 0x09-0x0A: JC, 0x10 (jump to success)
+    # 0x0B-0x0C: LDI, 0x00 (failure)
+    # 0x0D-0x0E: OUT, 0x00
+    # 0x0F: HLT
+    # 0x10-0x11: LDI, 0x01 (success - carry was set)
+    # 0x12-0x13: OUT, 0x00
+    # 0x14: HLT
+    program = [
+        Op.LDI, 42,      # 0x00: AC = 42
+        Op.TAX,          # 0x02: X = 42 (we'll clear it next)
+        Op.LDI, 0,       # 0x03: AC = 0
+        Op.TAX,          # 0x05: X = 0
+        Op.LDI, 42,      # 0x06: AC = 42
+        Op.DIV,          # 0x08: 42 / 0 -> sets carry
+        Op.JC, 0x10,     # 0x09: Jump to 0x10 if carry set
+        Op.LDI, 0x00,    # 0x0B: AC = 0 (carry not set - failure)
+        Op.OUT, 0x00,    # 0x0D
+        Op.HLT,          # 0x0F
+        Op.LDI, 0x01,    # 0x10: AC = 1 (carry was set - success)
+        Op.OUT, 0x00,    # 0x12
+        Op.HLT           # 0x14
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"DIV by zero carry test: 0x{result:02X} (expected: 0x01 if carry set)")
+    assert result == 0x01, f"DIV by zero should set carry. Expected 0x01, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_div_large_values(dut):
+    """Test DIV instruction: 200 / 25 = 8"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    program = [
+        Op.LDI, 200,     # AC = 200 (0xC8)
+        Op.LDXI, 25,     # X = 25
+        Op.DIV,          # 200 / 25 = 8, remainder 0
+        Op.OUT, 0x00,    # Output quotient
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 8  # 200 / 25 = 8
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"DIV large: 200 / 25 = {result} (expected: {expected})")
+    assert result == expected, f"DIV large test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mod_basic(dut):
+    """Test MOD instruction: 17 % 5 = 2 (remainder)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: 17 % 5 = 2
+    program = [
+        Op.LDI, 17,      # AC = 17
+        Op.LDXI, 5,      # X = 5
+        Op.MOD,          # AC % X -> AC (remainder=2), Y (quotient=3)
+        Op.OUT, 0x00,    # Output AC (remainder)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 2  # 17 % 5 = 2
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"MOD basic: 17 % 5 = {result} (expected: {expected})")
+    assert result == expected, f"MOD basic test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mod_no_remainder(dut):
+    """Test MOD instruction: 15 % 3 = 0 (exact division)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    program = [
+        Op.LDI, 15,      # AC = 15
+        Op.LDXI, 3,      # X = 3
+        Op.MOD,          # 15 % 3 = 0
+        Op.OUT, 0x00,    # Output remainder (0)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0  # 15 % 3 = 0
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"MOD no remainder: 15 % 3 = {result} (expected: {expected})")
+    assert result == expected, f"MOD no remainder test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mod_quotient_in_y(dut):
+    """Test MOD instruction: verify quotient is stored in Y"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 17 % 5 = 2 (remainder), quotient = 3 in Y
+    program = [
+        Op.LDI, 17,      # AC = 17
+        Op.LDXI, 5,      # X = 5
+        Op.MOD,          # AC % X -> AC (remainder=2), Y (quotient=3)
+        Op.TYA,          # AC = Y (get quotient)
+        Op.OUT, 0x00,    # Output quotient
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 3  # 17 / 5 = 3
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"MOD quotient in Y: 17 / 5 = {result} (expected: {expected})")
+    assert result == expected, f"MOD quotient in Y test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mod_by_zero_sets_carry(dut):
+    """Test MOD instruction: division by zero sets carry flag"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Division by zero should set carry flag
+    # Address layout:
+    # 0x00-0x01: LDI, 42
+    # 0x02-0x03: LDXI, 0
+    # 0x04: MOD
+    # 0x05-0x06: JC, 0x0C (jump to success)
+    # 0x07-0x08: LDI, 0x00 (failure)
+    # 0x09-0x0A: OUT, 0x00
+    # 0x0B: HLT
+    # 0x0C-0x0D: LDI, 0x01 (success)
+    # 0x0E-0x0F: OUT, 0x00
+    # 0x10: HLT
+    program = [
+        Op.LDI, 42,      # 0x00: AC = 42
+        Op.LDXI, 0,      # 0x02: X = 0 (divisor)
+        Op.MOD,          # 0x04: 42 % 0 -> sets carry
+        Op.JC, 0x0C,     # 0x05: Jump to 0x0C if carry set
+        Op.LDI, 0x00,    # 0x07: Failure marker (carry not set)
+        Op.OUT, 0x00,    # 0x09
+        Op.HLT,          # 0x0B
+        Op.LDI, 0x01,    # 0x0C: Success marker (carry was set)
+        Op.OUT, 0x00,    # 0x0E
+        Op.HLT           # 0x10
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"MOD by zero carry test: 0x{result:02X} (expected: 0x01 if carry set)")
+    assert result == 0x01, f"MOD by zero should set carry. Expected 0x01, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mod_larger_divisor(dut):
+    """Test MOD instruction: when divisor > dividend, remainder = dividend"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 5 % 10 = 5 (remainder = dividend when divisor is larger)
+    program = [
+        Op.LDI, 5,       # AC = 5
+        Op.LDXI, 10,     # X = 10
+        Op.MOD,          # 5 % 10 = 5
+        Op.OUT, 0x00,    # Output remainder
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 5  # 5 % 10 = 5
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"MOD larger divisor: 5 % 10 = {result} (expected: {expected})")
+    assert result == expected, f"MOD larger divisor test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_div_mod_combined(dut):
+    """Test DIV and MOD combined: verify consistency"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 23 = 7 * 3 + 2, so 23 / 7 = 3 and 23 % 7 = 2
+    # Verify: quotient * divisor + remainder = dividend
+    program = [
+        Op.LDI, 23,      # AC = 23
+        Op.LDXI, 7,      # X = 7
+        Op.DIV,          # 23 / 7 -> AC (quotient=3), Y (remainder=2)
+        Op.OUT, 0x00,    # Output quotient (3)
+        Op.TYA,          # AC = Y (remainder)
+        Op.OUT, 0x00,    # Output remainder (2)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    quotient = await tb.wait_for_io_write(max_cycles=500)
+    remainder = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"DIV/MOD combined: 23 / 7 = {quotient} remainder {remainder}")
+    assert quotient == 3, f"Combined quotient failed. Expected 3, got {quotient}"
+    assert remainder == 2, f"Combined remainder failed. Expected 2, got {remainder}"
+
+    # Verify: 7 * 3 + 2 = 23
+    reconstructed = 7 * quotient + remainder
+    assert reconstructed == 23, f"Reconstruction failed: {reconstructed} != 23"
 
     dut._log.info("Test PASSED!")
 

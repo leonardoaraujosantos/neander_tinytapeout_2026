@@ -16,6 +16,8 @@
 //   0x07: LDY addr  - Y = MEM[addr]
 //   0x08: STY addr  - MEM[addr] = Y
 //   0x09: MUL       - AC * X -> Y:AC (16-bit result, high byte in Y, low byte in AC)
+//   0x0E: DIV       - AC / X -> AC (quotient), Y (remainder)
+//   0x0F: MOD       - AC % X -> AC (remainder), Y (quotient)
 //   0x0A: TSF       - FP = SP (transfer SP to FP)
 //   0x0B: TFS       - SP = FP (transfer FP to SP)
 //   0x0C: PUSH_FP   - MEM[--SP] = FP (push frame pointer)
@@ -167,8 +169,10 @@ module neander_control (
         // Indexed addressing states (Y)
         S_LDA_Y_1, S_LDA_Y_2, S_LDA_Y_3, S_LDA_Y_4,  // LDA addr,Y (0x22)
         S_STA_Y_1, S_STA_Y_2, S_STA_Y_3, S_STA_Y_4,  // STA addr,Y (0x12)
-        // Multiplication
+        // Multiplication and Division
         S_MUL,                                        // MUL (0x09) - AC * X -> Y:AC
+        S_DIV,                                        // DIV (0x0E) - AC / X -> AC (quotient), Y (remainder)
+        S_MOD,                                        // MOD (0x0F) - AC % X -> AC (remainder), Y (quotient)
         // Frame Pointer Extension states
         S_TSF,                                        // TSF (0x0A) - FP = SP
         S_TFS,                                        // TFS (0x0B) - SP = FP
@@ -267,6 +271,8 @@ module neander_control (
                             4'hB: next_state = S_TFS;      // TFS (0x0B) - SP = FP
                             4'hC: next_state = S_PUSH_FP_1; // PUSH_FP (0x0C)
                             4'hD: next_state = S_POP_FP_1;  // POP_FP (0x0D)
+                            4'hE: next_state = S_DIV;      // DIV (0x0E) - AC / X -> AC, Y
+                            4'hF: next_state = S_MOD;      // MOD (0x0F) - AC % X -> AC, Y
                             default: next_state = S_FETCH_1;
                         endcase
                     end
@@ -1065,7 +1071,7 @@ module neander_control (
             end
 
             // ================================================================
-            // MULTIPLICATION INSTRUCTION
+            // MULTIPLICATION AND DIVISION INSTRUCTIONS
             // ================================================================
 
             // --- MUL (0x09) ---
@@ -1080,6 +1086,36 @@ module neander_control (
                 mul_to_y = 1;       // Signal datapath to use mul_high for Y input
                 nz_load = 1;        // Update N and Z based on low byte (AC)
                 c_load = 1;         // Set carry if overflow (high byte != 0)
+                next_state = S_FETCH_1;
+            end
+
+            // --- DIV (0x0E) ---
+            // Divide AC by X: AC / X -> AC (quotient), Y (remainder)
+            // Single cycle operation (combinational divider in ALU)
+            // Carry flag set on division by zero
+            S_DIV: begin
+                alu_op = 4'b1010;   // DIV operation
+                alu_b_sel = 2'b10;  // Select X register as ALU B input
+                ac_load = 1;        // Load quotient to AC
+                y_load = 1;         // Load remainder to Y
+                mul_to_y = 1;       // Signal datapath to use mul_high (remainder) for Y input
+                nz_load = 1;        // Update N and Z based on quotient (AC)
+                c_load = 1;         // Set carry if division by zero
+                next_state = S_FETCH_1;
+            end
+
+            // --- MOD (0x0F) ---
+            // Modulo AC by X: AC % X -> AC (remainder), Y (quotient)
+            // Single cycle operation (combinational divider in ALU)
+            // Carry flag set on division by zero
+            S_MOD: begin
+                alu_op = 4'b1011;   // MOD operation
+                alu_b_sel = 2'b10;  // Select X register as ALU B input
+                ac_load = 1;        // Load remainder to AC
+                y_load = 1;         // Load quotient to Y
+                mul_to_y = 1;       // Signal datapath to use mul_high (quotient) for Y input
+                nz_load = 1;        // Update N and Z based on remainder (AC)
+                c_load = 1;         // Set carry if division by zero
                 next_state = S_FETCH_1;
             end
 
