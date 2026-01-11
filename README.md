@@ -11,21 +11,25 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - **I/O Instructions**: IN/OUT for external communication
 - **Immediate Addressing**: LDI for loading constants
 - **Stack Operations**: PUSH/POP/CALL/RET for subroutines
-- **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR for C compiler support
+- **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP for C compiler support
 - **X Register**: Index register with LDX, STX, LDXI, TAX, TXA, INX
-- **Indexed Addressing**: LDA addr,X and STA addr,X for array/pointer operations
+- **Y Register**: Second index register with LDY, STY, LDYI, TAY, TYA, INY
+- **Indexed Addressing**: LDA/STA with ,X and ,Y modes for array/pointer operations
+- **Hardware Multiplication**: MUL instruction (AC * X -> Y:AC) with 16-bit result
 
 ### Key Features
 
 - 8-bit data width and address space
-- Single accumulator architecture with X index register
+- Single accumulator architecture with X and Y index registers
 - Three condition flags (N: Negative, Z: Zero, C: Carry)
-- 30+ instructions including:
+- 45+ instructions including:
   - Stack operations (PUSH/POP/CALL/RET)
   - LCC extension (SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP)
   - Carry-based jumps (JC, JNC) for unsigned comparisons
   - X register operations (LDX, STX, LDXI, TAX, TXA, INX)
-  - Indexed addressing modes (LDA addr,X and STA addr,X)
+  - Y register operations (LDY, STY, LDYI, TAY, TYA, INY)
+  - Indexed addressing modes (LDA/STA addr,X and LDA/STA addr,Y)
+  - Hardware multiplication (MUL: AC * X -> Y:AC, 16-bit result)
 - FSM-based control unit
 - External memory interface (32 bytes addressable via TinyTapeout pins)
 
@@ -104,12 +108,40 @@ The X index register enables efficient array access and pointer operations:
 | 0x7E | TXA | AC <- X | N, Z |
 | 0x7F | INX | X <- X + 1 | - |
 
-### Indexed Addressing Modes
+### Indexed Addressing Modes (X)
 
 | Opcode | Mnemonic | Operation | Flags |
 |--------|----------|-----------|-------|
 | 0x21 | LDA addr,X | AC <- MEM[addr + X] | N, Z |
 | 0x11 | STA addr,X | MEM[addr + X] <- AC | - |
+
+### Y Register Extension
+
+The Y index register provides a second index for dual-pointer operations:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x03 | TAY | Y <- AC | - |
+| 0x04 | TYA | AC <- Y | N, Z |
+| 0x05 | INY | Y <- Y + 1 | - |
+| 0x06 | LDYI imm | Y <- imm | - |
+| 0x07 | LDY addr | Y <- MEM[addr] | - |
+| 0x08 | STY addr | MEM[addr] <- Y | - |
+
+### Indexed Addressing Modes (Y)
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x22 | LDA addr,Y | AC <- MEM[addr + Y] | N, Z |
+| 0x12 | STA addr,Y | MEM[addr + Y] <- AC | - |
+
+### Hardware Multiplication
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x09 | MUL | Y:AC <- AC * X (16-bit result) | N, Z, C |
+
+The MUL instruction multiplies AC by X using a combinational 8x8 multiplier. The 16-bit result is stored with the high byte in Y and the low byte in AC. The carry flag is set if the result overflows 8 bits (high byte != 0).
 
 ## Architecture
 
@@ -123,14 +155,15 @@ graph TB
         PC[PC<br/>Program Counter]
         SP[SP<br/>Stack Pointer]
         X[X<br/>Index Register]
+        Y[Y<br/>Index Register]
         RI[RI<br/>Instruction Reg]
         REM[REM<br/>Address Reg]
         RDM[RDM<br/>Data Reg]
         AC[AC<br/>Accumulator]
-        ALU[ALU<br/>+ - & OR ^ ~ << >>]
+        ALU[ALU<br/>+ - * & OR ^ ~ << >>]
         NZC[N Z C<br/>Flags]
         MUX[Address MUX<br/>PC/RDM/SP]
-        IDX[Indexed Addr<br/>REM + X]
+        IDX[Indexed Addr<br/>REM + X/Y]
     end
 
     subgraph External
@@ -149,17 +182,23 @@ graph TB
     MUX --> REM
     REM --> IDX
     X --> IDX
+    Y --> IDX
     IDX -->|address| RAM
     RAM -->|data| RDM
     RDM --> RI
     AC --> ALU
-    AC --> X
-    X --> AC
-    RAM -->|data| ALU
+    X --> ALU
     ALU --> AC
+    ALU --> Y
+    AC --> X
+    AC --> Y
+    X --> AC
+    Y --> AC
+    RAM -->|data| ALU
     AC --> NZC
     AC -->|data| RAM
     X -->|data| RAM
+    Y -->|data| RAM
     IO_IN --> AC
     AC --> IO_OUT
 ```
@@ -173,9 +212,10 @@ tt_um_neander (TinyTapeout wrapper)
     │   ├── pc_reg (Program Counter)
     │   ├── sp_reg (Stack Pointer)
     │   ├── x_reg (X Index Register)
+    │   ├── y_reg (Y Index Register)
     │   ├── mux_addr (3-way Address MUX)
     │   ├── generic_reg (REM, RDM, RI, AC)
-    │   ├── neander_alu (ADD, SUB, AND, OR, XOR, NOT, SHL, SHR, NEG)
+    │   ├── neander_alu (ADD, SUB, MUL, AND, OR, XOR, NOT, SHL, SHR, NEG)
     │   └── nzc_reg (N, Z, C Flags)
     └── neander_control (FSM)
 ```
