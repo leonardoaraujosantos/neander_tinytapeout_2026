@@ -1899,3 +1899,209 @@ async def test_div_large_values(dut):
     assert io_output == 8, f"Expected 8, got {io_output}"
 
     dut._log.info("Test PASSED: DIV large values working correctly")
+
+
+# =============================================================================
+# Multi-byte Arithmetic Tests (ADC, SBC, ASR)
+# =============================================================================
+
+@cocotb.test()
+async def test_adc_basic(dut):
+    """Test ADC instruction: add with carry"""
+    dut._log.info("Start ADC Basic Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: Set carry by overflow (255+1), then ADC 5+3+1=9
+    # 0xFF + 1 = 0 with carry=1
+    # Then 5 + 3 + 1 = 9
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0xFF  # AC = 255
+    RAM[0x02] = 0x30  # ADD addr
+    RAM[0x03] = 0x18  # MEM[0x18] = 1 (will overflow)
+    RAM[0x04] = 0xE0  # LDI
+    RAM[0x05] = 5     # AC = 5
+    RAM[0x06] = 0x31  # ADC addr (0x31 = opcode 0x3 with sub_opcode 1)
+    RAM[0x07] = 0x19  # MEM[0x19] = 3
+    RAM[0x08] = 0xD0  # OUT
+    RAM[0x09] = 0x00
+    RAM[0x0A] = 0xF0  # HLT
+    # Data
+    RAM[0x18] = 1     # For overflow
+    RAM[0x19] = 3     # For ADC
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: 255+1 (overflow, sets carry), then ADC 5+3+1=9")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 9, f"Expected 9 (5+3+1), got {io_output}"
+
+    dut._log.info("Test PASSED: ADC basic working correctly")
+
+
+@cocotb.test()
+async def test_sbc_basic(dut):
+    """Test SBC instruction: subtract with borrow"""
+    dut._log.info("Start SBC Basic Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: Set borrow by underflow (5-10), then SBC 10-3-1=6
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 5     # AC = 5
+    RAM[0x02] = 0x74  # SUB addr
+    RAM[0x03] = 0x18  # MEM[0x18] = 10 (will underflow)
+    RAM[0x04] = 0xE0  # LDI
+    RAM[0x05] = 10    # AC = 10
+    RAM[0x06] = 0x51  # SBC addr (0x51 = opcode 0x5 with sub_opcode 1)
+    RAM[0x07] = 0x19  # MEM[0x19] = 3
+    RAM[0x08] = 0xD0  # OUT
+    RAM[0x09] = 0x00
+    RAM[0x0A] = 0xF0  # HLT
+    # Data
+    RAM[0x18] = 10    # For underflow
+    RAM[0x19] = 3     # For SBC
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: 5-10 (underflow, sets borrow), then SBC 10-3-1=6")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 6, f"Expected 6 (10-3-1), got {io_output}"
+
+    dut._log.info("Test PASSED: SBC basic working correctly")
+
+
+@cocotb.test()
+async def test_asr_positive(dut):
+    """Test ASR instruction: arithmetic shift right on positive number"""
+    dut._log.info("Start ASR Positive Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 8, ASR, OUT (8 >> 1 = 4)
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 8     # AC = 8
+    RAM[0x02] = 0x61  # ASR (0x61 = opcode 0x6 with sub_opcode 1)
+    RAM[0x03] = 0xD0  # OUT
+    RAM[0x04] = 0x00
+    RAM[0x05] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 8, ASR (8>>1=4)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 4, f"Expected 4 (8>>1), got {io_output}"
+
+    dut._log.info("Test PASSED: ASR positive working correctly")
+
+
+@cocotb.test()
+async def test_asr_negative(dut):
+    """Test ASR instruction: arithmetic shift right on negative number (preserves sign)"""
+    dut._log.info("Start ASR Negative Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 0xF8 (-8), ASR, OUT (0xF8 >> 1 = 0xFC = -4)
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0xF8  # AC = -8 (0xF8)
+    RAM[0x02] = 0x61  # ASR
+    RAM[0x03] = 0xD0  # OUT
+    RAM[0x04] = 0x00
+    RAM[0x05] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 0xF8 (-8), ASR (0xFC = -4, sign preserved)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0xFC, f"Expected 0xFC (-4), got 0x{io_output:02X}"
+
+    dut._log.info("Test PASSED: ASR negative (sign preserved) working correctly")

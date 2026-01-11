@@ -400,8 +400,8 @@ module neander_datapath (
     end
 
     neander_alu u_alu (
-        .a(ac), .b(alu_b_in), .alu_op(alu_op), .result(alu_res),
-        .mul_high(alu_mul_high), .carry_out(alu_carry)
+        .a(ac), .b(alu_b_in), .alu_op(alu_op), .carry_in(flagC),
+        .result(alu_res), .mul_high(alu_mul_high), .carry_out(alu_carry)
     );
 
     // Combinational Logic for AC Input Mux

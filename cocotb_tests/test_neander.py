@@ -54,9 +54,12 @@ class Op:
     STA  = 0x10
     LDA  = 0x20
     ADD  = 0x30
+    ADC  = 0x31  # ADC addr: AC = AC + MEM[addr] + Carry (add with carry)
     OR   = 0x40
     AND  = 0x50
+    SBC  = 0x51  # SBC addr: AC = AC - MEM[addr] - Carry (subtract with borrow)
     NOT  = 0x60
+    ASR  = 0x61  # ASR: AC = AC >> 1 (arithmetic shift right, preserves sign)
     PUSH = 0x70  # Stack PUSH (sub-opcode 0)
     POP  = 0x71  # Stack POP  (sub-opcode 1)
     CALL = 0x72  # CALL subroutine (sub-opcode 2)
@@ -4300,6 +4303,482 @@ async def test_div_mod_combined(dut):
     # Verify: 7 * 3 + 2 = 23
     reconstructed = 7 * quotient + remainder
     assert reconstructed == 23, f"Reconstruction failed: {reconstructed} != 23"
+
+    dut._log.info("Test PASSED!")
+
+
+# =============================================================================
+# Multi-byte Arithmetic Tests (ADC, SBC, ASR)
+# =============================================================================
+
+# ADC Tests (Add with Carry)
+
+@cocotb.test()
+async def test_adc_basic_no_carry(dut):
+    """Test ADC instruction: 5 + 3 with carry=0 = 8"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # First clear carry with an ADD that doesn't overflow, then test ADC
+    # Data at addresses right after code
+    DATA_ZERO = 0x0C  # Address for value 0
+    DATA_THREE = 0x0D  # Address for value 3
+    program = [
+        Op.LDI, 0,          # 0x00: AC = 0
+        Op.ADD, DATA_ZERO,  # 0x02: AC = 0 + 0 = 0, clears carry
+        Op.LDI, 5,          # 0x04: AC = 5
+        Op.ADC, DATA_THREE, # 0x06: AC = 5 + 3 + 0 = 8
+        Op.OUT, 0x00,       # 0x08: Output result
+        Op.HLT,             # 0x0A
+        0x00,               # 0x0B: padding
+        0x00,               # 0x0C: DATA_ZERO = 0
+        0x03,               # 0x0D: DATA_THREE = 3
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    expected = 8
+    dut._log.info(f"ADC no carry: 5 + 3 + 0 = {result} (expected: {expected})")
+    assert result == expected, f"ADC basic test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_adc_with_carry_set(dut):
+    """Test ADC instruction: 5 + 3 with carry=1 = 9"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set carry by overflowing (0xFF + 1), then test ADC
+    DATA_ONE = 0x0C    # Address for value 1
+    DATA_THREE = 0x0D  # Address for value 3
+    program = [
+        Op.LDI, 0xFF,       # 0x00: AC = 255
+        Op.ADD, DATA_ONE,   # 0x02: AC = 255 + 1 = 0, sets carry
+        Op.LDI, 5,          # 0x04: AC = 5
+        Op.ADC, DATA_THREE, # 0x06: AC = 5 + 3 + 1 = 9
+        Op.OUT, 0x00,       # 0x08: Output result
+        Op.HLT,             # 0x0A
+        0x00,               # 0x0B: padding
+        0x01,               # 0x0C: DATA_ONE = 1
+        0x03,               # 0x0D: DATA_THREE = 3
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    expected = 9  # 5 + 3 + 1 = 9
+    dut._log.info(f"ADC with carry: 5 + 3 + 1 = {result} (expected: {expected})")
+    assert result == expected, f"ADC with carry test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_adc_16bit_addition(dut):
+    """Test ADC for 16-bit addition: 0x0102 + 0x0304 = 0x0406"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 16-bit addition: low bytes first, then high bytes with ADC
+    # Data addresses after code
+    DATA_LOW = 0x1A   # Low byte of second number (0x04)
+    DATA_HIGH = 0x1B  # High byte of second number (0x03)
+    RES_LOW = 0x1C    # Result low byte storage
+    RES_HIGH = 0x1D   # Result high byte storage
+    program = [
+        # First add low bytes: 0x02 + 0x04 = 0x06, no carry
+        Op.LDI, 0x02,       # 0x00: AC = 0x02
+        Op.ADD, DATA_LOW,   # 0x02: AC = 0x02 + 0x04 = 0x06, carry=0
+        Op.STA, RES_LOW,    # 0x04: Store low result
+        # Now add high bytes with carry: 0x01 + 0x03 + 0 = 0x04
+        Op.LDI, 0x01,       # 0x06: AC = 0x01
+        Op.ADC, DATA_HIGH,  # 0x08: AC = 0x01 + 0x03 + carry = 0x04
+        Op.STA, RES_HIGH,   # 0x0A: Store high result
+        # Output results
+        Op.LDA, RES_LOW,    # 0x0C: Load low result
+        Op.OUT, 0x00,       # 0x0E: Output low byte
+        Op.LDA, RES_HIGH,   # 0x10: Load high result
+        Op.OUT, 0x00,       # 0x12: Output high byte
+        Op.HLT,             # 0x14
+        # Padding to reach data addresses
+        0x00, 0x00, 0x00, 0x00, 0x00,  # 0x15-0x19
+        0x04,               # 0x1A: DATA_LOW = 0x04
+        0x03,               # 0x1B: DATA_HIGH = 0x03
+        0x00,               # 0x1C: RES_LOW (will be written)
+        0x00,               # 0x1D: RES_HIGH (will be written)
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    low_result = await tb.wait_for_io_write(max_cycles=500)
+    high_result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"16-bit ADC: 0x0102 + 0x0304 = 0x{high_result:02X}{low_result:02X}")
+    assert low_result == 0x06, f"Low byte failed. Expected 0x06, got 0x{low_result:02X}"
+    assert high_result == 0x04, f"High byte failed. Expected 0x04, got 0x{high_result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_adc_16bit_with_carry_propagation(dut):
+    """Test ADC for 16-bit addition with carry: 0x00FF + 0x0001 = 0x0100"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 0x00FF + 0x0001 = 0x0100 (carry propagates from low to high byte)
+    DATA_LOW = 0x1A
+    DATA_HIGH = 0x1B
+    RES_LOW = 0x1C
+    RES_HIGH = 0x1D
+    program = [
+        # Add low bytes: 0xFF + 0x01 = 0x00 with carry=1
+        Op.LDI, 0xFF,       # 0x00: AC = 0xFF
+        Op.ADD, DATA_LOW,   # 0x02: AC = 0xFF + 0x01 = 0x00, carry=1
+        Op.STA, RES_LOW,    # 0x04: Store low result
+        # Add high bytes with carry: 0x00 + 0x00 + 1 = 0x01
+        Op.LDI, 0x00,       # 0x06: AC = 0x00
+        Op.ADC, DATA_HIGH,  # 0x08: AC = 0x00 + 0x00 + 1 = 0x01
+        Op.STA, RES_HIGH,   # 0x0A: Store high result
+        # Output
+        Op.LDA, RES_LOW,    # 0x0C
+        Op.OUT, 0x00,       # 0x0E
+        Op.LDA, RES_HIGH,   # 0x10
+        Op.OUT, 0x00,       # 0x12
+        Op.HLT,             # 0x14
+        # Padding
+        0x00, 0x00, 0x00, 0x00, 0x00,  # 0x15-0x19
+        0x01,               # 0x1A: DATA_LOW = 0x01
+        0x00,               # 0x1B: DATA_HIGH = 0x00
+        0x00,               # 0x1C: RES_LOW
+        0x00,               # 0x1D: RES_HIGH
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    low_result = await tb.wait_for_io_write(max_cycles=500)
+    high_result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"16-bit ADC with carry: 0x00FF + 0x0001 = 0x{high_result:02X}{low_result:02X}")
+    assert low_result == 0x00, f"Low byte failed. Expected 0x00, got 0x{low_result:02X}"
+    assert high_result == 0x01, f"High byte failed. Expected 0x01, got 0x{high_result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+# SBC Tests (Subtract with Borrow)
+
+@cocotb.test()
+async def test_sbc_basic_no_borrow(dut):
+    """Test SBC instruction: 10 - 3 with borrow=0 = 7"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Clear carry/borrow with subtraction that doesn't underflow
+    DATA_FIVE = 0x0C   # Value for clearing borrow (10-5 = 5, no borrow)
+    DATA_THREE = 0x0D  # Value for SBC test
+    program = [
+        Op.LDI, 10,         # 0x00: AC = 10
+        Op.SUB, DATA_FIVE,  # 0x02: AC = 10 - 5 = 5, no borrow, carry=0
+        Op.LDI, 10,         # 0x04: AC = 10
+        Op.SBC, DATA_THREE, # 0x06: AC = 10 - 3 - 0 = 7
+        Op.OUT, 0x00,       # 0x08
+        Op.HLT,             # 0x0A
+        0x00,               # 0x0B: padding
+        0x05,               # 0x0C: DATA_FIVE = 5
+        0x03,               # 0x0D: DATA_THREE = 3
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    expected = 7
+    dut._log.info(f"SBC no borrow: 10 - 3 - 0 = {result} (expected: {expected})")
+    assert result == expected, f"SBC basic test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_sbc_with_borrow_set(dut):
+    """Test SBC instruction: 10 - 3 with borrow=1 = 6"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set borrow by underflowing: 5 - 10 = 0xFB with borrow=1
+    DATA_TEN = 0x0C    # For underflow
+    DATA_THREE = 0x0D  # For SBC
+    program = [
+        Op.LDI, 5,          # 0x00: AC = 5
+        Op.SUB, DATA_TEN,   # 0x02: AC = 5 - 10 = 0xFB, sets borrow
+        Op.LDI, 10,         # 0x04: AC = 10
+        Op.SBC, DATA_THREE, # 0x06: AC = 10 - 3 - 1 = 6
+        Op.OUT, 0x00,       # 0x08
+        Op.HLT,             # 0x0A
+        0x00,               # 0x0B: padding
+        0x0A,               # 0x0C: DATA_TEN = 10
+        0x03,               # 0x0D: DATA_THREE = 3
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    expected = 6  # 10 - 3 - 1 = 6
+    dut._log.info(f"SBC with borrow: 10 - 3 - 1 = {result} (expected: {expected})")
+    assert result == expected, f"SBC with borrow test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_sbc_16bit_subtraction(dut):
+    """Test SBC for 16-bit subtraction: 0x0304 - 0x0102 = 0x0202"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 0x0304 - 0x0102 = 0x0202
+    DATA_LOW = 0x1A   # Low byte of second number (0x02)
+    DATA_HIGH = 0x1B  # High byte of second number (0x01)
+    RES_LOW = 0x1C
+    RES_HIGH = 0x1D
+    program = [
+        # Subtract low bytes: 0x04 - 0x02 = 0x02, no borrow
+        Op.LDI, 0x04,       # 0x00
+        Op.SUB, DATA_LOW,   # 0x02: AC = 0x04 - 0x02 = 0x02, carry=0
+        Op.STA, RES_LOW,    # 0x04
+        # Subtract high bytes with borrow
+        Op.LDI, 0x03,       # 0x06
+        Op.SBC, DATA_HIGH,  # 0x08: AC = 0x03 - 0x01 - 0 = 0x02
+        Op.STA, RES_HIGH,   # 0x0A
+        # Output
+        Op.LDA, RES_LOW,    # 0x0C
+        Op.OUT, 0x00,       # 0x0E
+        Op.LDA, RES_HIGH,   # 0x10
+        Op.OUT, 0x00,       # 0x12
+        Op.HLT,             # 0x14
+        # Padding
+        0x00, 0x00, 0x00, 0x00, 0x00,  # 0x15-0x19
+        0x02,               # 0x1A: DATA_LOW = 0x02
+        0x01,               # 0x1B: DATA_HIGH = 0x01
+        0x00,               # 0x1C: RES_LOW
+        0x00,               # 0x1D: RES_HIGH
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    low_result = await tb.wait_for_io_write(max_cycles=500)
+    high_result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"16-bit SBC: 0x0304 - 0x0102 = 0x{high_result:02X}{low_result:02X}")
+    assert low_result == 0x02, f"Low byte failed. Expected 0x02, got 0x{low_result:02X}"
+    assert high_result == 0x02, f"High byte failed. Expected 0x02, got 0x{high_result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_sbc_16bit_with_borrow_propagation(dut):
+    """Test SBC for 16-bit subtraction with borrow: 0x0100 - 0x0001 = 0x00FF"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 0x0100 - 0x0001 = 0x00FF (borrow propagates)
+    DATA_LOW = 0x1A
+    DATA_HIGH = 0x1B
+    RES_LOW = 0x1C
+    RES_HIGH = 0x1D
+    program = [
+        # Subtract low bytes: 0x00 - 0x01 = 0xFF with borrow=1
+        Op.LDI, 0x00,       # 0x00
+        Op.SUB, DATA_LOW,   # 0x02: AC = 0x00 - 0x01 = 0xFF, borrow=1
+        Op.STA, RES_LOW,    # 0x04
+        # Subtract high bytes with borrow
+        Op.LDI, 0x01,       # 0x06
+        Op.SBC, DATA_HIGH,  # 0x08: AC = 0x01 - 0x00 - 1 = 0x00
+        Op.STA, RES_HIGH,   # 0x0A
+        # Output
+        Op.LDA, RES_LOW,    # 0x0C
+        Op.OUT, 0x00,       # 0x0E
+        Op.LDA, RES_HIGH,   # 0x10
+        Op.OUT, 0x00,       # 0x12
+        Op.HLT,             # 0x14
+        # Padding
+        0x00, 0x00, 0x00, 0x00, 0x00,  # 0x15-0x19
+        0x01,               # 0x1A: DATA_LOW = 0x01
+        0x00,               # 0x1B: DATA_HIGH = 0x00
+        0x00,               # 0x1C: RES_LOW
+        0x00,               # 0x1D: RES_HIGH
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    low_result = await tb.wait_for_io_write(max_cycles=500)
+    high_result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"16-bit SBC with borrow: 0x0100 - 0x0001 = 0x{high_result:02X}{low_result:02X}")
+    assert low_result == 0xFF, f"Low byte failed. Expected 0xFF, got 0x{low_result:02X}"
+    assert high_result == 0x00, f"High byte failed. Expected 0x00, got 0x{high_result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+# ASR Tests (Arithmetic Shift Right)
+
+@cocotb.test()
+async def test_asr_positive_number(dut):
+    """Test ASR: positive 8 >> 1 = 4 (preserves sign)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    program = [
+        Op.LDI, 8,       # AC = 8 (0x08)
+        Op.ASR,          # AC = 4 (arithmetic shift right)
+        Op.OUT, 0x00,
+        Op.HLT,
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    expected = 4  # 8 >> 1 = 4
+    dut._log.info(f"ASR positive: 8 >> 1 = {result} (expected: {expected})")
+    assert result == expected, f"ASR positive test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_asr_negative_number(dut):
+    """Test ASR: negative -8 (0xF8) >> 1 = -4 (0xFC) (preserves sign)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # -8 in two's complement = 0xF8
+    # ASR: 0xF8 >> 1 = 0xFC (preserves sign bit)
+    program = [
+        Op.LDI, 0xF8,    # AC = -8 (0xF8)
+        Op.ASR,          # AC = -4 (0xFC) - sign bit preserved
+        Op.OUT, 0x00,
+        Op.HLT,
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    expected = 0xFC  # -4 in two's complement
+    dut._log.info(f"ASR negative: 0xF8 >> 1 = 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"ASR negative test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_asr_vs_shr_negative(dut):
+    """Test ASR vs SHR: ASR preserves sign, SHR doesn't"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # -2 = 0xFE
+    # ASR: 0xFE >> 1 = 0xFF (-1) - sign preserved
+    # SHR: 0xFE >> 1 = 0x7F (127) - sign lost
+    program = [
+        Op.LDI, 0xFE,    # AC = -2 (0xFE)
+        Op.ASR,          # AC = -1 (0xFF)
+        Op.OUT, 0x00,
+        Op.LDI, 0xFE,    # AC = -2 (0xFE)
+        Op.SHR,          # AC = 127 (0x7F) - logical shift
+        Op.OUT, 0x00,
+        Op.HLT,
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    asr_result = await tb.wait_for_io_write(max_cycles=500)
+    shr_result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"ASR(-2) = 0x{asr_result:02X}, SHR(-2) = 0x{shr_result:02X}")
+    assert asr_result == 0xFF, f"ASR failed. Expected 0xFF, got 0x{asr_result:02X}"
+    assert shr_result == 0x7F, f"SHR failed. Expected 0x7F, got 0x{shr_result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_asr_sets_carry(dut):
+    """Test ASR: LSB shifted out goes to carry"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 5 (0b00000101) >> 1 = 2 with carry=1 (LSB was 1)
+    # Address layout:
+    # 0x00-0x01: LDI, 5
+    # 0x02: ASR
+    # 0x03-0x04: JC, 0x0A (jump to success if carry)
+    # 0x05-0x06: LDI, 0 (failure)
+    # 0x07-0x08: OUT, 0
+    # 0x09: HLT
+    # 0x0A-0x0B: LDI, 1 (success)
+    # 0x0C-0x0D: OUT, 0
+    # 0x0E: HLT
+    program = [
+        Op.LDI, 5,       # 0x00: AC = 5 (odd, LSB=1)
+        Op.ASR,          # 0x02: AC = 2, carry=1
+        Op.JC, 0x0A,     # 0x03: Jump if carry set
+        Op.LDI, 0,       # 0x05: Failure
+        Op.OUT, 0x00,    # 0x07
+        Op.HLT,          # 0x09
+        Op.LDI, 1,       # 0x0A: Success
+        Op.OUT, 0x00,    # 0x0C
+        Op.HLT,          # 0x0E
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    assert result == 1, f"ASR carry test failed. Expected 1 (carry set), got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_asr_multiple_shifts(dut):
+    """Test multiple ASR: -128 >> 4 = -8"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # -128 (0x80) >> 4 = -8 (0xF8)
+    program = [
+        Op.LDI, 0x80,    # AC = -128
+        Op.ASR,          # AC = -64 (0xC0)
+        Op.ASR,          # AC = -32 (0xE0)
+        Op.ASR,          # AC = -16 (0xF0)
+        Op.ASR,          # AC = -8 (0xF8)
+        Op.OUT, 0x00,
+        Op.HLT,
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    expected = 0xF8  # -8
+    dut._log.info(f"ASR multiple: -128 >> 4 = 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"ASR multiple test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
 
     dut._log.info("Test PASSED!")
 
