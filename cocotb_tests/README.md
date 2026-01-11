@@ -26,6 +26,10 @@ make SIM=verilator
 
 ## Testes Incluídos
 
+O arquivo de testes contém **80 testes automatizados** cobrindo todas as instruções do NEANDER-X.
+
+### Testes Básicos
+
 | Teste | Descrição |
 |-------|-----------|
 | `test_multiply_by_5_basic` | f(3,7) = 3*5 + 7 = 22 |
@@ -36,6 +40,26 @@ make SIM=verilator
 | `test_loop_countdown` | Conta de 10 até 0 |
 | `test_logical_operations` | AND, OR, NOT |
 | `test_conditional_jump_jn` | Teste de JN (jump if negative) |
+
+### Testes LCC Extension (NEG, CMP, JC, JNC)
+
+| Teste | Descrição |
+|-------|-----------|
+| `test_neg_positive` | NEG de valor positivo |
+| `test_neg_negative` | NEG de valor negativo |
+| `test_neg_zero` | NEG de zero |
+| `test_neg_sets_n_flag` | NEG atualiza flag N |
+| `test_neg_sets_z_flag` | NEG atualiza flag Z |
+| `test_cmp_equal` | CMP valores iguais (Z=1) |
+| `test_cmp_not_equal` | CMP valores diferentes |
+| `test_cmp_preserves_ac` | CMP não modifica AC |
+| `test_cmp_less_than_sets_n` | CMP menor que (N=1) |
+| `test_jc_taken` | JC salta quando C=1 |
+| `test_jc_not_taken` | JC não salta quando C=0 |
+| `test_jnc_taken` | JNC salta quando C=0 |
+| `test_jnc_not_taken` | JNC não salta quando C=1 |
+| `test_sub_sets_carry` | SUB atualiza flag C |
+| `test_cmp_sets_carry_on_borrow` | CMP atualiza flag C |
 
 ## Programa Principal: f(a,b) = a*5 + b
 

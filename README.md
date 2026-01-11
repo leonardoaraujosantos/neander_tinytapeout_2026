@@ -6,14 +6,26 @@ A SystemVerilog implementation of the NEANDER-X educational 8-bit processor for 
 
 ## Overview
 
-NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://www.inf.ufrgs.br/arq/wiki/doku.php?id=neander) (Universidade Federal do Rio Grande do Sul) for teaching fundamental computer architecture concepts in Brazil. This implementation extends the original NEANDER with I/O instructions, immediate addressing, and stack operations.
+NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://www.inf.ufrgs.br/arq/wiki/doku.php?id=neander) (Universidade Federal do Rio Grande do Sul) for teaching fundamental computer architecture concepts in Brazil. This implementation (NEANDER-X) extends the original NEANDER with:
+
+- **I/O Instructions**: IN/OUT for external communication
+- **Immediate Addressing**: LDI for loading constants
+- **Stack Operations**: PUSH/POP/CALL/RET for subroutines
+- **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR for C compiler support
+- **X Register**: Index register with LDX, STX, LDXI, TAX, TXA, INX
+- **Indexed Addressing**: LDA addr,X and STA addr,X for array/pointer operations
 
 ### Key Features
 
 - 8-bit data width and address space
-- Single accumulator architecture
-- Two condition flags (N: Negative, Z: Zero)
-- 16 instructions including stack operations (PUSH/POP/CALL/RET)
+- Single accumulator architecture with X index register
+- Three condition flags (N: Negative, Z: Zero, C: Carry)
+- 30+ instructions including:
+  - Stack operations (PUSH/POP/CALL/RET)
+  - LCC extension (SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP)
+  - Carry-based jumps (JC, JNC) for unsigned comparisons
+  - X register operations (LDX, STX, LDXI, TAX, TXA, INX)
+  - Indexed addressing modes (LDA addr,X and STA addr,X)
 - FSM-based control unit
 - External memory interface (32 bytes addressable via TinyTapeout pins)
 
@@ -53,6 +65,52 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 | 0x72 | CALL addr | SP--; MEM[SP] <- PC; PC <- addr | - |
 | 0x73 | RET | PC <- MEM[SP]; SP++ | - |
 
+### LCC Extension (C Compiler Support)
+
+These instructions extend the ALU capabilities to support C compiler code generation:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x01 | NEG | AC <- -AC (two's complement) | N, Z, C |
+| 0x02 | CMP addr | Compare AC with MEM[addr] (flags only) | N, Z, C |
+| 0x74 | SUB addr | AC <- AC - MEM[addr] | N, Z, C |
+| 0x75 | INC | AC <- AC + 1 | N, Z |
+| 0x76 | DEC | AC <- AC - 1 | N, Z |
+| 0x77 | XOR addr | AC <- AC ^ MEM[addr] | N, Z |
+| 0x78 | SHL | AC <- AC << 1 | N, Z |
+| 0x79 | SHR | AC <- AC >> 1 | N, Z |
+
+### Carry-Based Jump Instructions
+
+These instructions enable unsigned comparisons using the carry flag:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x81 | JC addr | if C: PC <- addr | - |
+| 0x82 | JNC addr | if !C: PC <- addr | - |
+
+**Note:** The ADD instruction also updates the carry flag (C) on overflow.
+
+### X Register Extension (Indexed Addressing)
+
+The X index register enables efficient array access and pointer operations:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x7A | LDX addr | X <- MEM[addr] | - |
+| 0x7B | STX addr | MEM[addr] <- X | - |
+| 0x7C | LDXI imm | X <- imm | - |
+| 0x7D | TAX | X <- AC | - |
+| 0x7E | TXA | AC <- X | N, Z |
+| 0x7F | INX | X <- X + 1 | - |
+
+### Indexed Addressing Modes
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x21 | LDA addr,X | AC <- MEM[addr + X] | N, Z |
+| 0x11 | STA addr,X | MEM[addr + X] <- AC | - |
+
 ## Architecture
 
 ```mermaid
@@ -64,13 +122,15 @@ graph TB
     subgraph Datapath
         PC[PC<br/>Program Counter]
         SP[SP<br/>Stack Pointer]
+        X[X<br/>Index Register]
         RI[RI<br/>Instruction Reg]
         REM[REM<br/>Address Reg]
         RDM[RDM<br/>Data Reg]
         AC[AC<br/>Accumulator]
-        ALU[ALU<br/>+ & OR NOT]
-        NZ[N Z<br/>Flags]
+        ALU[ALU<br/>+ - & OR ^ ~ << >>]
+        NZC[N Z C<br/>Flags]
         MUX[Address MUX<br/>PC/RDM/SP]
+        IDX[Indexed Addr<br/>REM + X]
     end
 
     subgraph External
@@ -81,20 +141,25 @@ graph TB
 
     FSM -->|control signals| Datapath
     RI -->|opcode| FSM
-    NZ -->|flags| FSM
+    NZC -->|flags| FSM
 
     PC --> MUX
     RDM --> MUX
     SP --> MUX
     MUX --> REM
-    REM -->|address| RAM
+    REM --> IDX
+    X --> IDX
+    IDX -->|address| RAM
     RAM -->|data| RDM
     RDM --> RI
     AC --> ALU
+    AC --> X
+    X --> AC
     RAM -->|data| ALU
     ALU --> AC
-    AC --> NZ
+    AC --> NZC
     AC -->|data| RAM
+    X -->|data| RAM
     IO_IN --> AC
     AC --> IO_OUT
 ```
@@ -107,10 +172,11 @@ tt_um_neander (TinyTapeout wrapper)
     ├── neander_datapath
     │   ├── pc_reg (Program Counter)
     │   ├── sp_reg (Stack Pointer)
+    │   ├── x_reg (X Index Register)
     │   ├── mux_addr (3-way Address MUX)
     │   ├── generic_reg (REM, RDM, RI, AC)
-    │   ├── neander_alu
-    │   └── nz_reg (Flags)
+    │   ├── neander_alu (ADD, SUB, AND, OR, XOR, NOT, SHL, SHR, NEG)
+    │   └── nzc_reg (N, Z, C Flags)
     └── neander_control (FSM)
 ```
 

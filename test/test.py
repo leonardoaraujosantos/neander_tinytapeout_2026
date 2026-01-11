@@ -864,3 +864,781 @@ async def test_loop_with_function_call(dut):
     assert io_output == 15, f"Expected 15 (0+5+5+5), got {io_output}"
 
     dut._log.info("Test PASSED: Loop with function f(x)=x+5 working correctly")
+
+
+# ============================================================================
+# LCC EXTENSION INSTRUCTION TESTS (SUB, INC, DEC, XOR, SHL, SHR)
+# ============================================================================
+
+@cocotb.test()
+async def test_lcc_sub_instruction(dut):
+    """Test SUB instruction (0x74): AC = AC - MEM[addr]"""
+    dut._log.info("Start LCC SUB Instruction Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 3, STA 0x1F, LDI 10, SUB 0x1F, OUT 0, HLT
+    # 10 - 3 = 7
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x03  # 3
+    RAM[0x02] = 0x10  # STA
+    RAM[0x03] = 0x1F  # addr 0x1F
+    RAM[0x04] = 0xE0  # LDI
+    RAM[0x05] = 0x0A  # 10
+    RAM[0x06] = 0x74  # SUB (LCC extension)
+    RAM[0x07] = 0x1F  # addr 0x1F
+    RAM[0x08] = 0xD0  # OUT
+    RAM[0x09] = 0x00  # port 0
+    RAM[0x0A] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 3, STA 0x1F, LDI 10, SUB 0x1F, OUT (10-3=7)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 7, f"Expected 7, got {io_output}"
+
+    dut._log.info("Test PASSED: SUB instruction working correctly")
+
+
+@cocotb.test()
+async def test_lcc_inc_instruction(dut):
+    """Test INC instruction (0x75): AC = AC + 1"""
+    dut._log.info("Start LCC INC Instruction Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 5, INC, OUT 0, HLT
+    # 5 + 1 = 6
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x05  # 5
+    RAM[0x02] = 0x75  # INC (LCC extension)
+    RAM[0x03] = 0x00  # (ignored)
+    RAM[0x04] = 0xD0  # OUT
+    RAM[0x05] = 0x00  # port 0
+    RAM[0x06] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 5, INC, OUT (5+1=6)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 6, f"Expected 6, got {io_output}"
+
+    dut._log.info("Test PASSED: INC instruction working correctly")
+
+
+@cocotb.test()
+async def test_lcc_dec_instruction(dut):
+    """Test DEC instruction (0x76): AC = AC - 1"""
+    dut._log.info("Start LCC DEC Instruction Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 10, DEC, OUT 0, HLT
+    # 10 - 1 = 9
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x0A  # 10
+    RAM[0x02] = 0x76  # DEC (LCC extension)
+    RAM[0x03] = 0x00  # (ignored)
+    RAM[0x04] = 0xD0  # OUT
+    RAM[0x05] = 0x00  # port 0
+    RAM[0x06] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 10, DEC, OUT (10-1=9)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 9, f"Expected 9, got {io_output}"
+
+    dut._log.info("Test PASSED: DEC instruction working correctly")
+
+
+@cocotb.test()
+async def test_lcc_xor_instruction(dut):
+    """Test XOR instruction (0x77): AC = AC ^ MEM[addr]"""
+    dut._log.info("Start LCC XOR Instruction Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 0x55, STA 0x1F, LDI 0xAA, XOR 0x1F, OUT 0, HLT
+    # 0xAA ^ 0x55 = 0xFF
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x55  # 0x55
+    RAM[0x02] = 0x10  # STA
+    RAM[0x03] = 0x1F  # addr 0x1F
+    RAM[0x04] = 0xE0  # LDI
+    RAM[0x05] = 0xAA  # 0xAA
+    RAM[0x06] = 0x77  # XOR (LCC extension)
+    RAM[0x07] = 0x1F  # addr 0x1F
+    RAM[0x08] = 0xD0  # OUT
+    RAM[0x09] = 0x00  # port 0
+    RAM[0x0A] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 0x55, STA 0x1F, LDI 0xAA, XOR 0x1F, OUT (0xAA^0x55=0xFF)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: 0x{io_output:02X}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0xFF, f"Expected 0xFF, got 0x{io_output:02X}"
+
+    dut._log.info("Test PASSED: XOR instruction working correctly")
+
+
+@cocotb.test()
+async def test_lcc_shl_instruction(dut):
+    """Test SHL instruction (0x78): AC = AC << 1"""
+    dut._log.info("Start LCC SHL Instruction Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 0x15, SHL, OUT 0, HLT
+    # 0x15 << 1 = 0x2A
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x15  # 0x15 (00010101)
+    RAM[0x02] = 0x78  # SHL (LCC extension)
+    RAM[0x03] = 0x00  # (ignored)
+    RAM[0x04] = 0xD0  # OUT
+    RAM[0x05] = 0x00  # port 0
+    RAM[0x06] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 0x15, SHL, OUT (0x15<<1=0x2A)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: 0x{io_output:02X}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0x2A, f"Expected 0x2A, got 0x{io_output:02X}"
+
+    dut._log.info("Test PASSED: SHL instruction working correctly")
+
+
+@cocotb.test()
+async def test_lcc_shr_instruction(dut):
+    """Test SHR instruction (0x79): AC = AC >> 1"""
+    dut._log.info("Start LCC SHR Instruction Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 0x2A, SHR, OUT 0, HLT
+    # 0x2A >> 1 = 0x15
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x2A  # 0x2A (00101010)
+    RAM[0x02] = 0x79  # SHR (LCC extension)
+    RAM[0x03] = 0x00  # (ignored)
+    RAM[0x04] = 0xD0  # OUT
+    RAM[0x05] = 0x00  # port 0
+    RAM[0x06] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 0x2A, SHR, OUT (0x2A>>1=0x15)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: 0x{io_output:02X}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0x15, f"Expected 0x15, got 0x{io_output:02X}"
+
+    dut._log.info("Test PASSED: SHR instruction working correctly")
+
+
+@cocotb.test()
+async def test_lcc_inc_dec_chain(dut):
+    """Test INC and DEC in sequence"""
+    dut._log.info("Start LCC INC/DEC Chain Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 10, INC, INC, INC, DEC, DEC, OUT 0, HLT
+    # 10 + 3 - 2 = 11
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x0A  # 10
+    RAM[0x02] = 0x75  # INC
+    RAM[0x03] = 0x00
+    RAM[0x04] = 0x75  # INC
+    RAM[0x05] = 0x00
+    RAM[0x06] = 0x75  # INC
+    RAM[0x07] = 0x00
+    RAM[0x08] = 0x76  # DEC
+    RAM[0x09] = 0x00
+    RAM[0x0A] = 0x76  # DEC
+    RAM[0x0B] = 0x00
+    RAM[0x0C] = 0xD0  # OUT
+    RAM[0x0D] = 0x00  # port 0
+    RAM[0x0E] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 10, INC x3, DEC x2, OUT (10+3-2=11)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 11, f"Expected 11, got {io_output}"
+
+    dut._log.info("Test PASSED: INC/DEC chain working correctly")
+
+
+@cocotb.test()
+async def test_lcc_multiply_by_2(dut):
+    """Test multiplication by 2 using SHL"""
+    dut._log.info("Start LCC Multiply by 2 Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 25, SHL, OUT 0, HLT
+    # 25 * 2 = 50
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 25    # 25
+    RAM[0x02] = 0x78  # SHL
+    RAM[0x03] = 0x00
+    RAM[0x04] = 0xD0  # OUT
+    RAM[0x05] = 0x00  # port 0
+    RAM[0x06] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 25, SHL, OUT (25*2=50)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 50, f"Expected 50, got {io_output}"
+
+    dut._log.info("Test PASSED: Multiply by 2 using SHL working correctly")
+
+
+# ============================================================================
+# X REGISTER EXTENSION INSTRUCTION TESTS (LDX, STX, LDXI, TAX, TXA, INX)
+# ============================================================================
+
+@cocotb.test()
+async def test_x_ldxi_txa(dut):
+    """Test LDXI and TXA instructions: X = imm, AC = X"""
+    dut._log.info("Start X Register LDXI/TXA Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDXI 0x42, TXA, OUT 0, HLT
+    # Load X with immediate 0x42, transfer to AC, output
+    RAM[0x00] = 0x7C  # LDXI (0x7C)
+    RAM[0x01] = 0x42  # immediate value
+    RAM[0x02] = 0x7E  # TXA (0x7E)
+    RAM[0x03] = 0x00  # (ignored)
+    RAM[0x04] = 0xD0  # OUT
+    RAM[0x05] = 0x00  # port 0
+    RAM[0x06] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDXI 0x42, TXA, OUT (X=0x42, AC=X)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: 0x{io_output:02X}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0x42, f"Expected 0x42, got 0x{io_output:02X}"
+
+    dut._log.info("Test PASSED: LDXI/TXA instructions working correctly")
+
+
+@cocotb.test()
+async def test_x_tax_instruction(dut):
+    """Test TAX instruction: X = AC"""
+    dut._log.info("Start X Register TAX Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 0x55, TAX, LDI 0, TXA, OUT 0, HLT
+    # Load AC with 0x55, transfer to X, clear AC, transfer back
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x55  # 0x55
+    RAM[0x02] = 0x7D  # TAX (0x7D)
+    RAM[0x03] = 0x00  # (ignored)
+    RAM[0x04] = 0xE0  # LDI
+    RAM[0x05] = 0x00  # 0 (clear AC)
+    RAM[0x06] = 0x7E  # TXA (0x7E)
+    RAM[0x07] = 0x00  # (ignored)
+    RAM[0x08] = 0xD0  # OUT
+    RAM[0x09] = 0x00  # port 0
+    RAM[0x0A] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 0x55, TAX, LDI 0, TXA, OUT")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: 0x{io_output:02X}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0x55, f"Expected 0x55, got 0x{io_output:02X}"
+
+    dut._log.info("Test PASSED: TAX instruction working correctly")
+
+
+@cocotb.test()
+async def test_x_inx_instruction(dut):
+    """Test INX instruction: X = X + 1"""
+    dut._log.info("Start X Register INX Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDXI 0x09, INX, TXA, OUT 0, HLT
+    # Load X with 9, increment to 10, output
+    RAM[0x00] = 0x7C  # LDXI
+    RAM[0x01] = 0x09  # 9
+    RAM[0x02] = 0x7F  # INX (0x7F)
+    RAM[0x03] = 0x00  # (ignored)
+    RAM[0x04] = 0x7E  # TXA
+    RAM[0x05] = 0x00  # (ignored)
+    RAM[0x06] = 0xD0  # OUT
+    RAM[0x07] = 0x00  # port 0
+    RAM[0x08] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDXI 9, INX, TXA, OUT (9+1=10)")
+
+    io_output = None
+
+    for cycle in range(200):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 10, f"Expected 10, got {io_output}"
+
+    dut._log.info("Test PASSED: INX instruction working correctly")
+
+
+@cocotb.test()
+async def test_x_ldx_stx(dut):
+    """Test LDX and STX instructions: X = MEM[addr], MEM[addr] = X"""
+    dut._log.info("Start X Register LDX/STX Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDI 0x37, STA 0x1E, LDX 0x1E, STX 0x1F, LDA 0x1F, OUT 0, HLT
+    # Store 0x37 to 0x1E, load into X, store X to 0x1F, load back to AC, output
+    RAM[0x00] = 0xE0  # LDI
+    RAM[0x01] = 0x37  # 0x37
+    RAM[0x02] = 0x10  # STA
+    RAM[0x03] = 0x1E  # addr 0x1E
+    RAM[0x04] = 0x7A  # LDX (0x7A)
+    RAM[0x05] = 0x1E  # addr 0x1E
+    RAM[0x06] = 0x7B  # STX (0x7B)
+    RAM[0x07] = 0x1F  # addr 0x1F
+    RAM[0x08] = 0x20  # LDA
+    RAM[0x09] = 0x1F  # addr 0x1F
+    RAM[0x0A] = 0xD0  # OUT
+    RAM[0x0B] = 0x00  # port 0
+    RAM[0x0C] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDI 0x37, STA 0x1E, LDX 0x1E, STX 0x1F, LDA 0x1F, OUT")
+
+    io_output = None
+
+    for cycle in range(400):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: 0x{io_output:02X}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 0x37, f"Expected 0x37, got 0x{io_output:02X}"
+
+    dut._log.info("Test PASSED: LDX/STX instructions working correctly")
+
+
+@cocotb.test()
+async def test_x_indexed_lda(dut):
+    """Test indexed LDA: AC = MEM[addr + X]"""
+    dut._log.info("Start X Register Indexed LDA Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Set up array at 0x18-0x1B: [10, 20, 30, 40]
+    # Load X=2, use LDA indexed to get array[2]=30
+    RAM[0x18] = 10
+    RAM[0x19] = 20
+    RAM[0x1A] = 30
+    RAM[0x1B] = 40
+
+    # Program: LDXI 2, LDA 0x18,X, OUT 0, HLT
+    RAM[0x00] = 0x7C  # LDXI
+    RAM[0x01] = 0x02  # X = 2
+    RAM[0x02] = 0x21  # LDA indexed (0x21)
+    RAM[0x03] = 0x18  # base address 0x18
+    RAM[0x04] = 0xD0  # OUT
+    RAM[0x05] = 0x00  # port 0
+    RAM[0x06] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDXI 2, LDA 0x18,X, OUT (array[2]=30)")
+
+    io_output = None
+
+    for cycle in range(300):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 30, f"Expected 30, got {io_output}"
+
+    dut._log.info("Test PASSED: Indexed LDA instruction working correctly")
+
+
+@cocotb.test()
+async def test_x_indexed_sta(dut):
+    """Test indexed STA: MEM[addr + X] = AC"""
+    dut._log.info("Start X Register Indexed STA Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: LDXI 3, LDI 99, STA 0x18,X, LDA 0x1B, OUT 0, HLT
+    # X=3, store 99 at 0x18+3=0x1B, load back, output
+    RAM[0x00] = 0x7C  # LDXI
+    RAM[0x01] = 0x03  # X = 3
+    RAM[0x02] = 0xE0  # LDI
+    RAM[0x03] = 99    # AC = 99
+    RAM[0x04] = 0x11  # STA indexed (0x11)
+    RAM[0x05] = 0x18  # base address 0x18
+    RAM[0x06] = 0x20  # LDA
+    RAM[0x07] = 0x1B  # addr 0x1B (0x18+3)
+    RAM[0x08] = 0xD0  # OUT
+    RAM[0x09] = 0x00  # port 0
+    RAM[0x0A] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: LDXI 3, LDI 99, STA 0x18,X, LDA 0x1B, OUT")
+
+    io_output = None
+
+    for cycle in range(400):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 99, f"Expected 99, got {io_output}"
+
+    dut._log.info("Test PASSED: Indexed STA instruction working correctly")
+
+
+@cocotb.test()
+async def test_x_register_loop(dut):
+    """Test X register as loop counter"""
+    dut._log.info("Start X Register Loop Test")
+
+    global RAM
+    RAM = [0] * 32
+
+    # Program: Use X as loop counter, count to 5
+    # LDXI 0, loop: INX, TXA, SUB 0x1F, JNZ loop, TXA, OUT, HLT
+    # 0x1F holds value 5
+    RAM[0x1F] = 0x05  # target value 5
+
+    RAM[0x00] = 0x7C  # LDXI
+    RAM[0x01] = 0x00  # X = 0
+    # Loop at 0x02
+    RAM[0x02] = 0x7F  # INX
+    RAM[0x03] = 0x00
+    RAM[0x04] = 0x7E  # TXA
+    RAM[0x05] = 0x00
+    RAM[0x06] = 0x74  # SUB
+    RAM[0x07] = 0x1F  # subtract 5
+    RAM[0x08] = 0xB0  # JNZ
+    RAM[0x09] = 0x02  # back to loop
+    RAM[0x0A] = 0x7E  # TXA (X should be 5 now)
+    RAM[0x0B] = 0x00
+    RAM[0x0C] = 0xD0  # OUT
+    RAM[0x0D] = 0x00
+    RAM[0x0E] = 0xF0  # HLT
+
+    clock = Clock(dut.clk, 10, unit="us")
+    cocotb.start_soon(clock.start())
+    cocotb.start_soon(ram_model(dut))
+
+    dut.ena.value = 1
+    dut.ui_in.value = 0
+    dut.uio_in.value = 0
+    dut.rst_n.value = 0
+    await ClockCycles(dut.clk, 10)
+    dut.rst_n.value = 1
+
+    dut._log.info("Running: X loop counter to 5")
+
+    io_output = None
+
+    for cycle in range(500):
+        await RisingEdge(dut.clk)
+
+        uo_val = safe_int(dut.uo_out.value, 0)
+        io_write = (uo_val >> 7) & 1
+        if io_write:
+            io_output = safe_int(dut.uio_out.value, 0)
+            dut._log.info(f"IO Write at cycle {cycle}! Output: {io_output}")
+
+    assert io_output is not None, "No IO write detected"
+    assert io_output == 5, f"Expected 5, got {io_output}"
+
+    dut._log.info("Test PASSED: X register loop counter working correctly")

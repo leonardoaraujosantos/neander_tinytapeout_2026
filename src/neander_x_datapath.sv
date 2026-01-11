@@ -1,5 +1,10 @@
 // ============================================================================
-// neander_x_datapath.sv — Datapath for NEANDER-X CPU
+// neander_x_datapath.sv — Datapath for NEANDER-X CPU (LCC + X Register Extension)
+// ============================================================================
+// X Register Extension adds:
+//   - X index register for indexed addressing
+//   - LDX, STX, LDXI, TAX, TXA, INX instructions
+//   - Indexed addressing modes: LDA addr,X and STA addr,X
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -67,26 +72,56 @@ module sp_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
-// NZ Register (Flags)
+// NZC Register (Flags: Negative, Zero, Carry)
 // ---------------------------------------------------------------------------
-module nz_reg (
+module nzc_reg (
     input  logic clk,
     input  logic reset,
-    input  logic nz_load,
+    input  logic nz_load,    // Load N and Z flags
+    input  logic c_load,     // Load C flag (separate control for CMP/arithmetic)
     input  logic N_in,
     input  logic Z_in,
+    input  logic C_in,
     output logic N_flag,
-    output logic Z_flag
+    output logic Z_flag,
+    output logic C_flag
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             N_flag <= 1'b0;
             Z_flag <= 1'b0;
+            C_flag <= 1'b0;
         end
-        else if (nz_load) begin
-            N_flag <= N_in;
-            Z_flag <= Z_in;
+        else begin
+            if (nz_load) begin
+                N_flag <= N_in;
+                Z_flag <= Z_in;
+            end
+            if (c_load) begin
+                C_flag <= C_in;
+            end
         end
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
+// X Index Register (Load & Increment)
+// ---------------------------------------------------------------------------
+module x_reg (
+    input  logic       clk,
+    input  logic       reset,
+    input  logic       x_load,
+    input  logic       x_inc,
+    input  logic [7:0] data_in,
+    output logic [7:0] x_value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            x_value <= 8'h00;
+        else if (x_load)
+            x_value <= data_in;
+        else if (x_inc)
+            x_value <= x_value + 8'h01;
     end
 endmodule
 
@@ -127,11 +162,18 @@ module neander_datapath (
     input  logic       rem_load,
     input  logic       rdm_load,
     input  logic       nz_load,
+    input  logic       c_load,   // Carry flag load (for CMP and arithmetic ops)
     input  logic [1:0] addr_sel,  // 00=RDM, 01=PC, 10=SP
-    input  logic [1:0] alu_op,
+    input  logic [3:0] alu_op,    // Extended to 4 bits for NEG and future ops
     input  logic       sp_inc,    // Stack pointer increment (POP/RET)
     input  logic       sp_dec,    // Stack pointer decrement (PUSH/CALL)
-    input  logic       mem_data_sel, // Memory data select: 0=AC, 1=PC (for CALL)
+    input  logic [1:0] mem_data_sel, // Memory data select: 00=AC, 01=PC, 10=X (for STA/CALL/STX)
+    input  logic       alu_b_sel, // ALU B input select: 0=mem_data, 1=constant 1 (for INC/DEC)
+    // X Register Extension signals
+    input  logic       x_load,    // Load X register
+    input  logic       x_inc,     // Increment X register
+    input  logic       x_to_ac,   // Transfer X to AC (TXA)
+    input  logic       indexed_mode, // Use indexed addressing (addr + X)
 
     // External RAM Interface
     input  logic [7:0] mem_data_in,
@@ -150,32 +192,51 @@ module neander_datapath (
     output logic [3:0] sub_opcode, // Lower nibble for stack ops
     output logic       flagN,
     output logic       flagZ,
+    output logic       flagC,      // Carry flag output
     output logic [7:0] dbg_pc,
     output logic [7:0] dbg_ac,
     output logic [7:0] dbg_ri,
-    output logic [7:0] dbg_sp
+    output logic [7:0] dbg_sp,
+    output logic [7:0] dbg_x      // X register debug output
 );
 
     // Internal Signals (using 'logic' for everything)
-    logic [7:0] pc, rem, rdm, ri, ac, sp;
+    logic [7:0] pc, rem, rdm, ri, ac, sp, x;  // Added X register
     logic [7:0] alu_res;
+    logic       alu_carry;  // Carry output from ALU
+    logic [7:0] alu_b_in;  // ALU B input (mem_data or constant 1)
     logic [7:0] addr_mux;
+    logic [7:0] addr_indexed;  // Address + X for indexed modes
     logic [7:0] ac_in;
-    logic       N_in, Z_in;
+    logic [7:0] x_in;     // X register input (from AC for TAX, or from memory for LDX)
+    logic       N_in, Z_in, C_in;
+
+    // Indexed address calculation: addr + X
+    assign addr_indexed = rdm + x;
 
     // Direct assignments
-    assign mem_addr     = rem;
-    assign mem_data_out = mem_data_sel ? pc : ac;  // MUX: 0=AC (STA/PUSH), 1=PC (CALL)
+    // Memory address: use indexed address when indexed_mode is set
+    assign mem_addr     = indexed_mode ? (rem + x) : rem;
+    // Memory data output MUX: 00=AC (STA/PUSH), 01=PC (CALL), 10=X (STX)
+    always_comb begin
+        case (mem_data_sel)
+            2'b00:   mem_data_out = ac;   // STA, PUSH
+            2'b01:   mem_data_out = pc;   // CALL (return address)
+            2'b10:   mem_data_out = x;    // STX
+            default: mem_data_out = ac;
+        endcase
+    end
     assign io_out       = ac;
     assign io_write     = io_write_ctrl;
     assign opcode       = ri[7:4];
-    assign sub_opcode   = ri[3:0];  // Lower nibble for PUSH/POP/CALL/RET
+    assign sub_opcode   = ri[3:0];  // Lower nibble for PUSH/POP/CALL/RET and indexed mode flag
 
     // Debug outputs
     assign dbg_pc = pc;
     assign dbg_ac = ac;
     assign dbg_ri = ri;
     assign dbg_sp = sp;
+    assign dbg_x  = x;  // X register debug output
 
     // --- Instantiations ---
 
@@ -190,6 +251,19 @@ module neander_datapath (
         .sp_inc(sp_inc), .sp_dec(sp_dec), .sp_load(1'b0),
         .data_in(8'h00), .sp_value(sp)
     );
+
+    // X Index Register
+    // Input can be from memory (LDX), immediate (LDXI), or AC (TAX)
+    x_reg u_x (
+        .clk(clk), .reset(reset),
+        .x_load(x_load), .x_inc(x_inc),
+        .data_in(x_in), .x_value(x)
+    );
+
+    // X register input mux: select between mem_data_in (LDX/LDXI) and AC (TAX)
+    // When opcode is 0x7 and sub_opcode is 0xD (TAX), input comes from AC
+    // Otherwise (LDX/LDXI), input comes from memory/immediate
+    assign x_in = (opcode == 4'h7 && sub_opcode == 4'hD) ? ac : mem_data_in;
 
     mux_addr u_mux (
         .sel(addr_sel), .pc(pc), .rdm(rdm), .sp(sp), .out(addr_mux)
@@ -212,14 +286,21 @@ module neander_datapath (
         .data_in(rdm), .value(ri)
     );
 
+    // ALU B input MUX: select between mem_data_in (0) and constant 1 (1) for INC/DEC
+    assign alu_b_in = alu_b_sel ? 8'h01 : mem_data_in;
+
     neander_alu u_alu (
-        .a(ac), .b(mem_data_in), .alu_op(alu_op), .result(alu_res)
+        .a(ac), .b(alu_b_in), .alu_op(alu_op), .result(alu_res), .carry_out(alu_carry)
     );
 
     // Combinational Logic for AC Input Mux
     always_comb begin
-        if (opcode == 4'h2 || opcode == 4'hE) begin
-            // LDA or LDI
+        if (x_to_ac) begin
+            // TXA: Transfer X to AC
+            ac_in = x;
+        end
+        else if (opcode == 4'h2 || opcode == 4'hE) begin
+            // LDA or LDI (including indexed LDA when sub_opcode[0]=1)
             ac_in = mem_data_in;
         end
         else if (opcode == 4'h7 && sub_opcode == 4'h1) begin
@@ -246,12 +327,17 @@ module neander_datapath (
     );
 
     // Flag Logic
+    // N and Z flags are based on AC input (for loads) or ALU result
     assign N_in = ac_in[7];
     assign Z_in = (ac_in == 8'h00);
+    // Carry flag comes directly from ALU
+    assign C_in = alu_carry;
 
-    nz_reg u_nz (
-        .clk(clk), .reset(reset), .nz_load(nz_load),
-        .N_in(N_in), .Z_in(Z_in), .N_flag(flagN), .Z_flag(flagZ)
+    nzc_reg u_nzc (
+        .clk(clk), .reset(reset),
+        .nz_load(nz_load), .c_load(c_load),
+        .N_in(N_in), .Z_in(Z_in), .C_in(C_in),
+        .N_flag(flagN), .Z_flag(flagZ), .C_flag(flagC)
     );
 
 endmodule
