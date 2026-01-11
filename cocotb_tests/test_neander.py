@@ -35,6 +35,14 @@ class Op:
     # LCC Compiler Extension (opcode 0x0 family)
     NEG  = 0x01  # NEG: AC = -AC (two's complement)
     CMP  = 0x02  # CMP addr: compare AC with MEM[addr], set flags only
+    # Y Register Extension (opcode 0x0 family)
+    TAY  = 0x03  # TAY: Y = AC
+    TYA  = 0x04  # TYA: AC = Y
+    INY  = 0x05  # INY: Y = Y + 1
+    LDYI = 0x06  # LDYI imm: Y = imm
+    LDY  = 0x07  # LDY addr: Y = MEM[addr]
+    STY  = 0x08  # STY addr: MEM[addr] = Y
+    MUL  = 0x09  # MUL: AC * X -> Y:AC (16-bit result)
     STA  = 0x10
     LDA  = 0x20
     ADD  = 0x30
@@ -59,9 +67,12 @@ class Op:
     TAX  = 0x7D  # TAX: X = AC
     TXA  = 0x7E  # TXA: AC = X
     INX  = 0x7F  # INX: X = X + 1
-    # Indexed addressing modes
+    # Indexed addressing modes (X)
     LDA_X = 0x21  # LDA addr,X: AC = MEM[addr + X]
     STA_X = 0x11  # STA addr,X: MEM[addr + X] = AC
+    # Indexed addressing modes (Y)
+    LDA_Y = 0x22  # LDA addr,Y: AC = MEM[addr + Y]
+    STA_Y = 0x12  # STA addr,Y: MEM[addr + Y] = AC
     JMP  = 0x80
     JC   = 0x81  # JC addr: jump if carry flag set
     JNC  = 0x82  # JNC addr: jump if carry flag clear
@@ -3240,5 +3251,663 @@ async def test_cmp_sets_carry_on_borrow(dut):
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"CMP carry test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+# ==============================================================================
+# Y REGISTER EXTENSION TESTS
+# ==============================================================================
+
+@cocotb.test()
+async def test_tay_basic(dut):
+    """Test TAY instruction: transfer AC to Y register"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_DATA = 0x80
+
+    # Test: Load value into AC, transfer to Y, transfer back using TYA, output
+    program = [
+        Op.LDI, 0x42,       # 0x00: AC = 0x42
+        Op.TAY,             # 0x02: Y = AC (0x42)
+        Op.LDI, 0x00,       # 0x03: AC = 0 (clear AC)
+        Op.TYA,             # 0x05: AC = Y (should be 0x42)
+        Op.OUT, 0x00,       # 0x06: Output AC
+        Op.HLT, 0x00,       # 0x08: Halt
+    ]
+    expected = 0x42
+
+    dut._log.info("Testing TAY instruction: transfer AC to Y")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"TAY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_tya_sets_flags(dut):
+    """Test TYA instruction: sets N and Z flags"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Test: Load negative value into Y via TAY, clear AC, TYA should set N flag
+    # Then JN should take the jump
+    program = [
+        Op.LDI, 0x80,       # 0x00: AC = 0x80 (negative, bit 7 set)
+        Op.TAY,             # 0x02: Y = 0x80
+        Op.LDI, 0x00,       # 0x03: AC = 0
+        Op.TYA,             # 0x05: AC = Y = 0x80 (should set N flag)
+        Op.JN, 0x0D,        # 0x06: If N set, jump to success
+        Op.LDI, 0xFF,       # 0x08: Failure marker
+        Op.OUT, 0x00,       # 0x0A: Output failure
+        Op.HLT, 0x00,       # 0x0C: Halt
+
+        # Jump target (0x0D):
+        Op.LDI, 0x50,       # 0x0D: Success marker
+        Op.OUT, 0x00,       # 0x0F: Output 0x50
+        Op.HLT, 0x00,       # 0x11: Halt
+    ]
+    expected = 0x50
+
+    dut._log.info("Testing TYA instruction: sets N flag")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"TYA N flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_iny_basic(dut):
+    """Test INY instruction: increment Y register"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Test: Load 0x10 into Y, increment it 3 times, transfer to AC, output
+    program = [
+        Op.LDI, 0x10,       # 0x00: AC = 0x10
+        Op.TAY,             # 0x02: Y = 0x10
+        Op.INY,             # 0x03: Y = 0x11
+        Op.INY,             # 0x04: Y = 0x12
+        Op.INY,             # 0x05: Y = 0x13
+        Op.TYA,             # 0x06: AC = Y = 0x13
+        Op.OUT, 0x00,       # 0x07: Output AC
+        Op.HLT, 0x00,       # 0x09: Halt
+    ]
+    expected = 0x13
+
+    dut._log.info("Testing INY instruction: increment Y")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"INY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_ldyi_basic(dut):
+    """Test LDYI instruction: load immediate into Y"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Test: Load immediate value into Y, transfer to AC, output
+    program = [
+        Op.LDYI, 0x55,      # 0x00: Y = 0x55
+        Op.TYA,             # 0x02: AC = Y = 0x55
+        Op.OUT, 0x00,       # 0x03: Output AC
+        Op.HLT, 0x00,       # 0x05: Halt
+    ]
+    expected = 0x55
+
+    dut._log.info("Testing LDYI instruction: load immediate into Y")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"LDYI test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_ldy_basic(dut):
+    """Test LDY instruction: load Y from memory"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_DATA = 0x80
+
+    # Test: Store value in memory, load into Y, transfer to AC, output
+    program = [
+        Op.LDI, 0x77,       # 0x00: AC = 0x77
+        Op.STA, ADDR_DATA,  # 0x02: MEM[0x80] = 0x77
+        Op.LDY, ADDR_DATA,  # 0x04: Y = MEM[0x80] = 0x77
+        Op.LDI, 0x00,       # 0x06: AC = 0 (clear)
+        Op.TYA,             # 0x08: AC = Y = 0x77
+        Op.OUT, 0x00,       # 0x09: Output AC
+        Op.HLT, 0x00,       # 0x0B: Halt
+    ]
+    expected = 0x77
+
+    dut._log.info("Testing LDY instruction: load Y from memory")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"LDY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_sty_basic(dut):
+    """Test STY instruction: store Y to memory"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_DATA = 0x80
+
+    # Test: Load immediate into Y, store Y to memory, load from memory to AC, output
+    program = [
+        Op.LDYI, 0x99,      # 0x00: Y = 0x99
+        Op.STY, ADDR_DATA,  # 0x02: MEM[0x80] = Y = 0x99
+        Op.LDA, ADDR_DATA,  # 0x04: AC = MEM[0x80] = 0x99
+        Op.OUT, 0x00,       # 0x06: Output AC
+        Op.HLT, 0x00,       # 0x08: Halt
+    ]
+    expected = 0x99
+
+    dut._log.info("Testing STY instruction: store Y to memory")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"STY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_lda_indexed_y(dut):
+    """Test LDA addr,Y instruction: indexed load using Y register"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    BASE_ADDR = 0x80
+
+    # Test: Store values in array, set Y as index, load using indexed addressing
+    program = [
+        # Store values: MEM[0x80]=0x10, MEM[0x81]=0x20, MEM[0x82]=0x30, MEM[0x83]=0x40
+        Op.LDI, 0x10,
+        Op.STA, 0x80,
+        Op.LDI, 0x20,
+        Op.STA, 0x81,
+        Op.LDI, 0x30,
+        Op.STA, 0x82,
+        Op.LDI, 0x40,
+        Op.STA, 0x83,
+
+        # Set Y = 2, load MEM[0x80 + 2] = MEM[0x82] = 0x30
+        Op.LDYI, 0x02,      # 0x10: Y = 2
+        Op.LDA_Y, BASE_ADDR,# 0x12: AC = MEM[0x80 + Y] = MEM[0x82] = 0x30
+        Op.OUT, 0x00,       # 0x14: Output AC
+        Op.HLT, 0x00,       # 0x16: Halt
+    ]
+    expected = 0x30
+
+    dut._log.info("Testing LDA addr,Y instruction: indexed load")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"LDA indexed Y test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_sta_indexed_y(dut):
+    """Test STA addr,Y instruction: indexed store using Y register"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    BASE_ADDR = 0x80
+
+    # Test: Set Y as index, store value using indexed addressing, read back
+    program = [
+        Op.LDYI, 0x03,      # 0x00: Y = 3
+        Op.LDI, 0xAB,       # 0x02: AC = 0xAB
+        Op.STA_Y, BASE_ADDR,# 0x04: MEM[0x80 + Y] = MEM[0x83] = 0xAB
+        Op.LDA, 0x83,       # 0x06: AC = MEM[0x83] = 0xAB
+        Op.OUT, 0x00,       # 0x08: Output AC
+        Op.HLT, 0x00,       # 0x0A: Halt
+    ]
+    expected = 0xAB
+
+    dut._log.info("Testing STA addr,Y instruction: indexed store")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=2000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"STA indexed Y test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_array_copy_xy(dut):
+    """Test using both X and Y for array copy operation"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    SRC_ADDR = 0x80
+    DST_ADDR = 0x90
+
+    # Test: Copy array using X as source index, Y as destination index
+    # Copy MEM[0x80..0x82] to MEM[0x90..0x92]
+    program = [
+        # Initialize source array
+        Op.LDI, 0xAA,       # 0x00
+        Op.STA, 0x80,       # 0x02
+        Op.LDI, 0xBB,       # 0x04
+        Op.STA, 0x81,       # 0x06
+        Op.LDI, 0xCC,       # 0x08
+        Op.STA, 0x82,       # 0x0A
+
+        # Initialize indices: X=0 (src), Y=0 (dst)
+        Op.LDXI, 0x00,      # 0x0C: X = 0
+        Op.LDYI, 0x00,      # 0x0E: Y = 0
+
+        # Copy loop: copy 3 elements
+        # Element 0
+        Op.LDA_X, SRC_ADDR, # 0x10: AC = MEM[0x80 + X]
+        Op.STA_Y, DST_ADDR, # 0x12: MEM[0x90 + Y] = AC
+        Op.INX,             # 0x14: X++
+        Op.INY,             # 0x15: Y++
+
+        # Element 1
+        Op.LDA_X, SRC_ADDR, # 0x16: AC = MEM[0x80 + X]
+        Op.STA_Y, DST_ADDR, # 0x18: MEM[0x90 + Y] = AC
+        Op.INX,             # 0x1A: X++
+        Op.INY,             # 0x1B: Y++
+
+        # Element 2
+        Op.LDA_X, SRC_ADDR, # 0x1C: AC = MEM[0x80 + X]
+        Op.STA_Y, DST_ADDR, # 0x1E: MEM[0x90 + Y] = AC
+
+        # Verify: read from destination (index 1 should be 0xBB)
+        Op.LDA, 0x91,       # 0x20: AC = MEM[0x91] = 0xBB
+        Op.OUT, 0x00,       # 0x22: Output AC
+        Op.HLT, 0x00,       # 0x24: Halt
+    ]
+    expected = 0xBB
+
+    dut._log.info("Testing array copy with X and Y registers")
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=3000)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"Array copy XY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+# ============================================================================
+# MUL INSTRUCTION TESTS
+# ============================================================================
+
+@cocotb.test()
+async def test_mul_basic(dut):
+    """Test MUL instruction: 5 * 3 = 15 (fits in low byte)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: Load 5 into AC, 3 into X, multiply, output result
+    program = [
+        Op.LDI, 0x05,    # AC = 5
+        Op.TAX,          # X = AC (X = 5)
+        Op.LDI, 0x03,    # AC = 3
+        Op.MUL,          # AC * X -> Y:AC (3 * 5 = 15, Y=0, AC=15)
+        Op.OUT, 0x00,    # Output AC (low byte)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 15  # 5 * 3 = 15
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"MUL basic test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_zero(dut):
+    """Test MUL instruction: anything * 0 = 0"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: Load 42 into AC, 0 into X, multiply
+    program = [
+        Op.LDI, 0x2A,    # AC = 42
+        Op.LDXI, 0x00,   # X = 0
+        Op.MUL,          # AC * X -> Y:AC (42 * 0 = 0)
+        Op.OUT, 0x00,    # Output AC (should be 0)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"MUL zero test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_one(dut):
+    """Test MUL instruction: anything * 1 = same value"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: Load 42 into AC, 1 into X, multiply
+    program = [
+        Op.LDI, 0x2A,    # AC = 42
+        Op.LDXI, 0x01,   # X = 1
+        Op.MUL,          # AC * X -> Y:AC (42 * 1 = 42)
+        Op.OUT, 0x00,    # Output AC (should be 42)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 42
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"MUL one test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_16bit_result(dut):
+    """Test MUL instruction with 16-bit result: 16 * 16 = 256 (0x0100)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: 16 * 16 = 256 = 0x0100 (Y=1, AC=0)
+    program = [
+        Op.LDI, 0x10,    # AC = 16
+        Op.TAX,          # X = 16
+        Op.MUL,          # 16 * 16 = 256 -> Y=1, AC=0
+        Op.OUT, 0x00,    # Output AC (low byte = 0)
+        Op.TYA,          # AC = Y (get high byte)
+        Op.OUT, 0x00,    # Output Y value (high byte = 1)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    # First output should be low byte (0)
+    result_low = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"Low byte: 0x{result_low:02X} (expected: 0x00)")
+    assert result_low == 0x00, f"MUL 16-bit low byte failed. Expected 0x00, got 0x{result_low:02X}"
+
+    # Second output should be high byte (1)
+    result_high = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"High byte: 0x{result_high:02X} (expected: 0x01)")
+    assert result_high == 0x01, f"MUL 16-bit high byte failed. Expected 0x01, got 0x{result_high:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_large_result(dut):
+    """Test MUL instruction: 200 * 200 = 40000 (0x9C40)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 200 * 200 = 40000 = 0x9C40 (Y=0x9C, AC=0x40)
+    program = [
+        Op.LDI, 0xC8,    # AC = 200 (0xC8)
+        Op.TAX,          # X = 200
+        Op.MUL,          # 200 * 200 = 40000 -> Y=0x9C, AC=0x40
+        Op.OUT, 0x00,    # Output AC (low byte = 0x40)
+        Op.TYA,          # AC = Y
+        Op.OUT, 0x00,    # Output high byte (0x9C)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    # Low byte = 0x40
+    result_low = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"Low byte: 0x{result_low:02X} (expected: 0x40)")
+    assert result_low == 0x40, f"MUL large low byte failed. Expected 0x40, got 0x{result_low:02X}"
+
+    # High byte = 0x9C
+    result_high = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"High byte: 0x{result_high:02X} (expected: 0x9C)")
+    assert result_high == 0x9C, f"MUL large high byte failed. Expected 0x9C, got 0x{result_high:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_max_values(dut):
+    """Test MUL instruction: 255 * 255 = 65025 (0xFE01)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 255 * 255 = 65025 = 0xFE01 (Y=0xFE, AC=0x01)
+    program = [
+        Op.LDI, 0xFF,    # AC = 255
+        Op.TAX,          # X = 255
+        Op.MUL,          # 255 * 255 = 65025 -> Y=0xFE, AC=0x01
+        Op.OUT, 0x00,    # Output AC (low byte = 0x01)
+        Op.TYA,          # AC = Y
+        Op.OUT, 0x00,    # Output high byte (0xFE)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    # Low byte = 0x01
+    result_low = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"Low byte: 0x{result_low:02X} (expected: 0x01)")
+    assert result_low == 0x01, f"MUL max low byte failed. Expected 0x01, got 0x{result_low:02X}"
+
+    # High byte = 0xFE
+    result_high = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"High byte: 0x{result_high:02X} (expected: 0xFE)")
+    assert result_high == 0xFE, f"MUL max high byte failed. Expected 0xFE, got 0x{result_high:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_sets_carry_on_overflow(dut):
+    """Test MUL sets carry flag when result overflows 8 bits"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 16 * 16 = 256 > 255, should set carry flag
+    # We use JC to detect if carry is set
+    # Address layout:
+    # 0x00: LDI, 0x01: 0x10, 0x02: TAX, 0x03: MUL
+    # 0x04: JC, 0x05: target, 0x06: LDI, 0x07: 0x00
+    # 0x08: OUT, 0x09: 0x00, 0x0A: HLT
+    # 0x0B: LDI (carry set path), 0x0C: 0x01, 0x0D: OUT, 0x0E: 0x00, 0x0F: HLT
+    program = [
+        Op.LDI, 0x10,    # 0x00: AC = 16
+        Op.TAX,          # 0x02: X = 16
+        Op.MUL,          # 0x03: 16 * 16 = 256 -> sets carry (overflow)
+        Op.JC, 0x0B,     # 0x04: Jump to 0x0B if carry set
+        Op.LDI, 0x00,    # 0x06: AC = 0 (carry not set - shouldn't reach here)
+        Op.OUT, 0x00,    # 0x08
+        Op.HLT,          # 0x0A
+        Op.LDI, 0x01,    # 0x0B: AC = 1 (carry was set)
+        Op.OUT, 0x00,    # 0x0D
+        Op.HLT           # 0x0F
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"Carry flag test: 0x{result:02X} (expected: 0x01 if carry set)")
+    assert result == 0x01, f"MUL should set carry on overflow. Expected 0x01, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_no_carry_small_result(dut):
+    """Test MUL clears carry flag when result fits in 8 bits"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # 3 * 5 = 15 <= 255, should not set carry flag
+    # Address layout:
+    # 0x00: LDI, 0x01: 0x03, 0x02: TAX, 0x03: LDI, 0x04: 0x05
+    # 0x05: MUL, 0x06: JNC, 0x07: target, 0x08: LDI, 0x09: 0x00
+    # 0x0A: OUT, 0x0B: 0x00, 0x0C: HLT
+    # 0x0D: LDI (no carry path), 0x0E: 0x01, 0x0F: OUT, 0x10: 0x00, 0x11: HLT
+    program = [
+        Op.LDI, 0x03,    # 0x00: AC = 3
+        Op.TAX,          # 0x02: X = 3
+        Op.LDI, 0x05,    # 0x03: AC = 5
+        Op.MUL,          # 0x05: 5 * 3 = 15 -> no carry (fits in 8 bits)
+        Op.JNC, 0x0D,    # 0x06: Jump to 0x0D if no carry
+        Op.LDI, 0x00,    # 0x08: AC = 0 (carry set - shouldn't reach here)
+        Op.OUT, 0x00,    # 0x0A
+        Op.HLT,          # 0x0C
+        Op.LDI, 0x01,    # 0x0D: AC = 1 (no carry)
+        Op.OUT, 0x00,    # 0x0F
+        Op.HLT           # 0x11
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=500)
+    dut._log.info(f"No carry flag test: 0x{result:02X} (expected: 0x01 if no carry)")
+    assert result == 0x01, f"MUL should not set carry for small result. Expected 0x01, got 0x{result:02X}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_factorial_5(dut):
+    """Test MUL by computing 5! = 120 using repeated multiplication"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Compute 5! = 5 * 4 * 3 * 2 * 1 = 120
+    # We'll do: 1*2=2, 2*3=6, 6*4=24, 24*5=120
+    program = [
+        Op.LDI, 0x01,    # AC = 1
+        Op.LDXI, 0x02,   # X = 2
+        Op.MUL,          # 1 * 2 = 2
+        Op.LDXI, 0x03,   # X = 3
+        Op.MUL,          # 2 * 3 = 6
+        Op.LDXI, 0x04,   # X = 4
+        Op.MUL,          # 6 * 4 = 24
+        Op.LDXI, 0x05,   # X = 5
+        Op.MUL,          # 24 * 5 = 120
+        Op.OUT, 0x00,    # Output result
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 120  # 5! = 120
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"5! = {result} (expected: {expected})")
+    assert result == expected, f"Factorial test failed. Expected {expected}, got {result}"
+
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_mul_power_of_2(dut):
+    """Test MUL for computing powers of 2: 2^8 = 256"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Compute 2^8 = 256 by repeated multiplication by 2
+    # 2*2=4, 4*2=8, 8*2=16, 16*2=32, 32*2=64, 64*2=128, 128*2=256
+    program = [
+        Op.LDI, 0x02,    # AC = 2
+        Op.LDXI, 0x02,   # X = 2
+        Op.MUL,          # 2*2=4
+        Op.MUL,          # 4*2=8
+        Op.MUL,          # 8*2=16
+        Op.MUL,          # 16*2=32
+        Op.MUL,          # 32*2=64
+        Op.MUL,          # 64*2=128
+        Op.MUL,          # 128*2=256 -> Y=1, AC=0
+        Op.TYA,          # Get high byte
+        Op.OUT, 0x00,    # Output high byte (should be 1)
+        Op.HLT
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 1  # High byte of 256 (0x0100) is 0x01
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"2^8 high byte = 0x{result:02X} (expected: 0x{expected:02X})")
+    assert result == expected, f"Power of 2 test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
 
     dut._log.info("Test PASSED!")

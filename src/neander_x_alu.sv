@@ -11,6 +11,7 @@
 //   0110: SHL  - a << 1          (carry = MSB shifted out)
 //   0111: SHR  - a >> 1          (carry = LSB shifted out)
 //   1000: NEG  - 0 - a = -a      (two's complement negation)
+//   1001: MUL  - a * b           (16-bit result: mul_high:result)
 // ============================================================================
 
 module neander_alu (
@@ -18,14 +19,18 @@ module neander_alu (
     input  logic [7:0] b,
     input  logic [3:0] alu_op,  // Extended to 4 bits for NEG and future ops
     output logic [7:0] result,
+    output logic [7:0] mul_high,  // High byte of multiplication result
     output logic       carry_out  // Carry/borrow flag output
 );
     logic [8:0] temp;  // 9-bit for carry detection
+    logic [15:0] mul_temp;  // 16-bit for multiplication result
 
     always_comb begin
         temp = 9'b0;
+        mul_temp = 16'b0;
         carry_out = 1'b0;
         result = 8'h00;
+        mul_high = 8'h00;
 
         case (alu_op)
             4'b0000: begin  // ADD
@@ -62,6 +67,12 @@ module neander_alu (
                 temp = 9'b0 - {1'b0, a};
                 result = temp[7:0];
                 carry_out = (a != 8'h00);  // Carry set if result is non-zero (a was not 0)
+            end
+            4'b1001: begin  // MUL (a * b = 16-bit result)
+                mul_temp = a * b;  // Combinational 8x8 multiplier
+                result = mul_temp[7:0];    // Low byte to AC
+                mul_high = mul_temp[15:8]; // High byte to Y register
+                carry_out = (mul_temp[15:8] != 8'h00);  // Carry set if overflow (high byte non-zero)
             end
             default: begin
                 result = 8'h00;

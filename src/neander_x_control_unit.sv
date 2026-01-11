@@ -1,14 +1,21 @@
 // ============================================================================
-// neander_x_control_unit.sv — Control Unit for NEANDER-X CPU (LCC + X Register + Carry Flag)
+// neander_x_control_unit.sv — Control Unit for NEANDER-X CPU (LCC + X/Y Register + Carry Flag)
 // ============================================================================
 // LCC Compiler Extension Instructions:
 //
 // Opcode 0x0 sub-opcodes (single-byte instructions):
 //   0x00: NOP       - No operation
 //   0x01: NEG       - AC = -AC (two's complement negation)
+//   0x03: TAY       - Y = AC (transfer AC to Y)
+//   0x04: TYA       - AC = Y (transfer Y to AC)
+//   0x05: INY       - Y = Y + 1 (increment Y)
 //
-// Opcode 0x0 with address operand:
+// Opcode 0x0 with address/immediate operand:
 //   0x02: CMP addr  - Compare AC with MEM[addr], set flags only (N, Z, C)
+//   0x06: LDYI imm  - Y = imm (load immediate)
+//   0x07: LDY addr  - Y = MEM[addr]
+//   0x08: STY addr  - MEM[addr] = Y
+//   0x09: MUL       - AC * X -> Y:AC (16-bit result, high byte in Y, low byte in AC)
 //
 // LCC Extension using opcode 0x7 sub-opcodes:
 //   0x74: SUB addr  - AC = AC - MEM[addr]
@@ -26,9 +33,13 @@
 //   0x7E: TXA       - AC = X (transfer X to AC)
 //   0x7F: INX       - X = X + 1 (increment X)
 //
-// Indexed Addressing (using sub_opcode bit 0):
+// Indexed Addressing with X (sub_opcode bit 0):
 //   0x21: LDA addr,X - AC = MEM[addr + X]
 //   0x11: STA addr,X - MEM[addr + X] = AC
+//
+// Indexed Addressing with Y (sub_opcode bit 1):
+//   0x22: LDA addr,Y - AC = MEM[addr + Y]
+//   0x12: STA addr,Y - MEM[addr + Y] = AC
 //
 // Carry-based Jump Instructions (opcode 0x8 with sub-opcodes):
 //   0x80: JMP addr  - Unconditional jump
@@ -60,13 +71,19 @@ module neander_control (
     output logic       io_write,
     output logic       sp_inc,      // Stack pointer increment (POP/RET)
     output logic       sp_dec,      // Stack pointer decrement (PUSH/CALL)
-    output logic [1:0] mem_data_sel,// Memory data select: 00=AC, 01=PC, 10=X
-    output logic       alu_b_sel,   // ALU B input select: 0=mem_data, 1=constant 1 (for INC/DEC)
+    output logic [1:0] mem_data_sel,// Memory data select: 00=AC, 01=PC, 10=X, 11=Y
+    output logic [1:0] alu_b_sel,   // ALU B input select: 00=mem_data, 01=constant 1 (INC/DEC), 10=X (MUL)
     // X Register Extension signals
     output logic       x_load,      // Load X register
     output logic       x_inc,       // Increment X register
     output logic       x_to_ac,     // Transfer X to AC (TXA)
-    output logic       indexed_mode // Use indexed addressing (addr + X)
+    output logic       indexed_mode, // Use indexed addressing (addr + X)
+    // Y Register Extension signals
+    output logic       y_load,      // Load Y register
+    output logic       y_inc,       // Increment Y register
+    output logic       y_to_ac,     // Transfer Y to AC (TYA)
+    output logic       indexed_mode_y, // Use indexed addressing (addr + Y)
+    output logic       mul_to_y     // Load Y with MUL high byte
 );
 
     // Using ENUM for states (Easier to debug in Waveforms)
@@ -103,7 +120,7 @@ module neander_control (
         S_TAX,                                 // TAX (0x7D) - single cycle
         S_TXA,                                 // TXA (0x7E) - single cycle
         S_INX,                                 // INX (0x7F) - single cycle
-        // Indexed addressing states
+        // Indexed addressing states (X)
         S_LDA_X_1, S_LDA_X_2, S_LDA_X_3, S_LDA_X_4,  // LDA addr,X (0x21)
         S_STA_X_1, S_STA_X_2, S_STA_X_3, S_STA_X_4,  // STA addr,X (0x11)
         // LCC Compiler Extension states (NEG, CMP, JC, JNC)
@@ -111,6 +128,18 @@ module neander_control (
         S_CMP_1, S_CMP_2, S_CMP_3, S_CMP_4,  // CMP addr (0x02) - compare, set flags only
         S_JC_1,  S_JC_2,  S_JC_3,             // JC addr (0x81) - jump if carry
         S_JNC_1, S_JNC_2, S_JNC_3,            // JNC addr (0x82) - jump if no carry
+        // Y Register Extension states
+        S_LDY_1, S_LDY_2, S_LDY_3, S_LDY_4,  // LDY addr (0x07)
+        S_STY_1, S_STY_2, S_STY_3, S_STY_4,  // STY addr (0x08)
+        S_LDYI_1, S_LDYI_2,                   // LDYI imm (0x06)
+        S_TAY,                                 // TAY (0x03) - single cycle
+        S_TYA,                                 // TYA (0x04) - single cycle
+        S_INY,                                 // INY (0x05) - single cycle
+        // Indexed addressing states (Y)
+        S_LDA_Y_1, S_LDA_Y_2, S_LDA_Y_3, S_LDA_Y_4,  // LDA addr,Y (0x22)
+        S_STA_Y_1, S_STA_Y_2, S_STA_Y_3, S_STA_Y_4,  // STA addr,Y (0x12)
+        // Multiplication
+        S_MUL,                                        // MUL (0x09) - AC * X -> Y:AC
         S_HLT
     } state_t;
 
@@ -143,12 +172,18 @@ module neander_control (
         sp_inc       = '0;
         sp_dec       = '0;
         mem_data_sel = 2'b00;  // Default to AC (00=AC)
-        alu_b_sel    = '0;     // Default to mem_data (0=mem_data)
+        alu_b_sel    = 2'b00;  // Default to mem_data (00=mem_data)
         // X Register Extension defaults
         x_load       = '0;
         x_inc        = '0;
         x_to_ac      = '0;
         indexed_mode = '0;
+        // Y Register Extension defaults
+        y_load       = '0;
+        y_inc        = '0;
+        y_to_ac      = '0;
+        indexed_mode_y = '0;
+        mul_to_y     = '0;
 
         next_state  = state;
 
@@ -174,24 +209,35 @@ module neander_control (
             // --- DECODE ---
             S_DECODE: begin
                 case (opcode)
-                    4'h0: begin  // NOP family + LCC extensions (NEG, CMP)
+                    4'h0: begin  // NOP family + LCC extensions (NEG, CMP) + Y register ops + MUL
                         case (sub_opcode)
                             4'h0: next_state = S_FETCH_1;  // NOP (0x00)
                             4'h1: next_state = S_NEG;      // NEG (0x01)
                             4'h2: next_state = S_CMP_1;    // CMP addr (0x02)
+                            4'h3: next_state = S_TAY;      // TAY (0x03)
+                            4'h4: next_state = S_TYA;      // TYA (0x04)
+                            4'h5: next_state = S_INY;      // INY (0x05)
+                            4'h6: next_state = S_LDYI_1;   // LDYI imm (0x06)
+                            4'h7: next_state = S_LDY_1;    // LDY addr (0x07)
+                            4'h8: next_state = S_STY_1;    // STY addr (0x08)
+                            4'h9: next_state = S_MUL;      // MUL (0x09) - AC * X -> Y:AC
                             default: next_state = S_FETCH_1;
                         endcase
                     end
                     4'h2: begin
-                        // LDA: check sub_opcode[0] for indexed mode
-                        if (sub_opcode[0])
+                        // LDA: check sub_opcode for indexed mode
+                        if (sub_opcode[1])
+                            next_state = S_LDA_Y_1;  // LDA addr,Y (0x22)
+                        else if (sub_opcode[0])
                             next_state = S_LDA_X_1;  // LDA addr,X (0x21)
                         else
                             next_state = S_LDA_1;    // LDA addr (0x20)
                     end
                     4'h1: begin
-                        // STA: check sub_opcode[0] for indexed mode
-                        if (sub_opcode[0])
+                        // STA: check sub_opcode for indexed mode
+                        if (sub_opcode[1])
+                            next_state = S_STA_Y_1;  // STA addr,Y (0x12)
+                        else if (sub_opcode[0])
                             next_state = S_STA_X_1;  // STA addr,X (0x11)
                         else
                             next_state = S_STA_1;    // STA addr (0x10)
@@ -546,7 +592,7 @@ module neander_control (
             S_INC: begin
                 ac_load = 1;
                 alu_op = 4'b0000;   // ADD
-                alu_b_sel = 1;     // Select constant 1 as ALU B input
+                alu_b_sel = 2'b01;  // Select constant 1 as ALU B input
                 nz_load = 1;
                 next_state = S_FETCH_1;
             end
@@ -556,7 +602,7 @@ module neander_control (
             S_DEC: begin
                 ac_load = 1;
                 alu_op = 4'b0001;   // SUB
-                alu_b_sel = 1;     // Select constant 1 as ALU B input
+                alu_b_sel = 2'b01;  // Select constant 1 as ALU B input
                 nz_load = 1;
                 next_state = S_FETCH_1;
             end
@@ -767,6 +813,138 @@ module neander_control (
             S_JNC_3: begin
                 if (!flagC) pc_load = 1;
                 else        pc_inc  = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // Y REGISTER EXTENSION INSTRUCTIONS
+            // ================================================================
+
+            // --- LDY addr (0x07) ---
+            // Load Y from memory: Y = MEM[addr]
+            S_LDY_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDY_2;
+            end
+            S_LDY_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDY_3;
+            end
+            S_LDY_3: begin
+                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDY_4;
+            end
+            S_LDY_4: begin
+                mem_read = 1;
+                y_load = 1;        // Load Y from memory
+                next_state = S_FETCH_1;
+            end
+
+            // --- STY addr (0x08) ---
+            // Store Y to memory: MEM[addr] = Y
+            S_STY_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STY_2;
+            end
+            S_STY_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STY_3;
+            end
+            S_STY_3: begin
+                addr_sel = 2'b00; rem_load = 1; next_state = S_STY_4;
+            end
+            S_STY_4: begin
+                mem_write = 1;
+                mem_data_sel = 2'b11;  // Select Y as data source
+                next_state = S_FETCH_1;
+            end
+
+            // --- LDYI imm (0x06) ---
+            // Load Y with immediate: Y = imm
+            S_LDYI_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDYI_2;
+            end
+            S_LDYI_2: begin
+                mem_read = 1;
+                y_load = 1;        // Load Y from immediate (mem_data_in)
+                pc_inc = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // --- TAY (0x03) ---
+            // Transfer AC to Y: Y = AC (single cycle)
+            S_TAY: begin
+                y_load = 1;        // Load Y from AC (datapath handles mux)
+                next_state = S_FETCH_1;
+            end
+
+            // --- TYA (0x04) ---
+            // Transfer Y to AC: AC = Y (single cycle)
+            S_TYA: begin
+                y_to_ac = 1;       // Signal datapath to select Y for AC input
+                ac_load = 1;
+                nz_load = 1;       // Update flags based on Y value
+                next_state = S_FETCH_1;
+            end
+
+            // --- INY (0x05) ---
+            // Increment Y: Y = Y + 1 (single cycle)
+            S_INY: begin
+                y_inc = 1;         // Increment Y register
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // INDEXED ADDRESSING MODES (Y)
+            // ================================================================
+
+            // --- LDA addr,Y (0x22) ---
+            // Load AC from memory with indexed addressing: AC = MEM[addr + Y]
+            S_LDA_Y_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDA_Y_2;
+            end
+            S_LDA_Y_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDA_Y_3;
+            end
+            S_LDA_Y_3: begin
+                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDA_Y_4;
+            end
+            S_LDA_Y_4: begin
+                mem_read = 1;
+                indexed_mode_y = 1;  // Use addr + Y for memory access
+                ac_load = 1;
+                nz_load = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // --- STA addr,Y (0x12) ---
+            // Store AC to memory with indexed addressing: MEM[addr + Y] = AC
+            S_STA_Y_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STA_Y_2;
+            end
+            S_STA_Y_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STA_Y_3;
+            end
+            S_STA_Y_3: begin
+                addr_sel = 2'b00; rem_load = 1; next_state = S_STA_Y_4;
+            end
+            S_STA_Y_4: begin
+                indexed_mode_y = 1;  // Use addr + Y for memory access
+                mem_write = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // MULTIPLICATION INSTRUCTION
+            // ================================================================
+
+            // --- MUL (0x09) ---
+            // Multiply AC by X: AC * X -> Y:AC (16-bit result)
+            // Low byte goes to AC, high byte goes to Y
+            // Single cycle operation (combinational multiplier in ALU)
+            S_MUL: begin
+                alu_op = 4'b1001;   // MUL operation
+                alu_b_sel = 2'b10;  // Select X register as ALU B input
+                ac_load = 1;        // Load low byte to AC
+                y_load = 1;         // Load high byte to Y
+                mul_to_y = 1;       // Signal datapath to use mul_high for Y input
+                nz_load = 1;        // Update N and Z based on low byte (AC)
+                c_load = 1;         // Set carry if overflow (high byte != 0)
                 next_state = S_FETCH_1;
             end
 

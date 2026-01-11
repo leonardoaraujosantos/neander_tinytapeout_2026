@@ -1,5 +1,5 @@
 // ============================================================================
-// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (LCC + X Register + Carry Flag)
+// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (LCC + X/Y Register + Carry Flag)
 // ============================================================================
 
 module cpu_top (
@@ -24,7 +24,8 @@ module cpu_top (
     output logic [7:0] dbg_ac,
     output logic [7:0] dbg_ri,
     output logic [7:0] dbg_sp,
-    output logic [7:0] dbg_x      // X register debug output
+    output logic [7:0] dbg_x,     // X register debug output
+    output logic [7:0] dbg_y      // Y register debug output
 );
 
     logic       pc_inc, pc_load;
@@ -39,12 +40,18 @@ module cpu_top (
     logic       io_write_ctrl;
     logic       sp_inc, sp_dec;
     logic [1:0] mem_data_sel;    // Extended to 2 bits for X register
-    logic       alu_b_sel;       // ALU B input select for INC/DEC
+    logic [1:0] alu_b_sel;       // ALU B input select: 00=mem, 01=const1, 10=X
     // X Register Extension signals
     logic       x_load;          // Load X register
     logic       x_inc;           // Increment X register
     logic       x_to_ac;         // Transfer X to AC (TXA)
     logic       indexed_mode;    // Use indexed addressing (addr + X)
+    // Y Register Extension signals
+    logic       y_load;          // Load Y register
+    logic       y_inc;           // Increment Y register
+    logic       y_to_ac;         // Transfer Y to AC (TYA)
+    logic       indexed_mode_y;  // Use indexed addressing (addr + Y)
+    logic       mul_to_y;        // Load Y with MUL high byte
 
     neander_datapath dp (
         .clk(clk),
@@ -71,6 +78,12 @@ module cpu_top (
         .x_inc(x_inc),
         .x_to_ac(x_to_ac),
         .indexed_mode(indexed_mode),
+        // Y Register Extension signals
+        .y_load(y_load),
+        .y_inc(y_inc),
+        .y_to_ac(y_to_ac),
+        .indexed_mode_y(indexed_mode_y),
+        .mul_to_y(mul_to_y),
         .io_write_ctrl(io_write_ctrl),
         // Data/Status I/O
         .mem_data_in(mem_data_in),
@@ -89,7 +102,8 @@ module cpu_top (
         .dbg_ac(dbg_ac),
         .dbg_ri(dbg_ri),
         .dbg_sp(dbg_sp),
-        .dbg_x(dbg_x)
+        .dbg_x(dbg_x),
+        .dbg_y(dbg_y)
     );
 
     neander_control uc (
@@ -121,7 +135,13 @@ module cpu_top (
         .x_load(x_load),
         .x_inc(x_inc),
         .x_to_ac(x_to_ac),
-        .indexed_mode(indexed_mode)
+        .indexed_mode(indexed_mode),
+        // Y Register Extension signals
+        .y_load(y_load),
+        .y_inc(y_inc),
+        .y_to_ac(y_to_ac),
+        .indexed_mode_y(indexed_mode_y),
+        .mul_to_y(mul_to_y)
     );
 
 endmodule

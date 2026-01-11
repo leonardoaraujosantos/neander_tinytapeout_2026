@@ -1,10 +1,15 @@
 // ============================================================================
-// neander_x_datapath.sv — Datapath for NEANDER-X CPU (LCC + X Register Extension)
+// neander_x_datapath.sv — Datapath for NEANDER-X CPU (LCC + X/Y Register Extension)
 // ============================================================================
 // X Register Extension adds:
 //   - X index register for indexed addressing
 //   - LDX, STX, LDXI, TAX, TXA, INX instructions
 //   - Indexed addressing modes: LDA addr,X and STA addr,X
+//
+// Y Register Extension adds:
+//   - Y index register for indexed addressing
+//   - LDY, STY, LDYI, TAY, TYA, INY instructions
+//   - Indexed addressing modes: LDA addr,Y and STA addr,Y
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -126,6 +131,27 @@ module x_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
+// Y Index Register (Load & Increment)
+// ---------------------------------------------------------------------------
+module y_reg (
+    input  logic       clk,
+    input  logic       reset,
+    input  logic       y_load,
+    input  logic       y_inc,
+    input  logic [7:0] data_in,
+    output logic [7:0] y_value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            y_value <= 8'h00;
+        else if (y_load)
+            y_value <= data_in;
+        else if (y_inc)
+            y_value <= y_value + 8'h01;
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
 // MUX PC/RDM/SP -> REM (3-way address mux)
 // ---------------------------------------------------------------------------
 module mux_addr (
@@ -167,13 +193,19 @@ module neander_datapath (
     input  logic [3:0] alu_op,    // Extended to 4 bits for NEG and future ops
     input  logic       sp_inc,    // Stack pointer increment (POP/RET)
     input  logic       sp_dec,    // Stack pointer decrement (PUSH/CALL)
-    input  logic [1:0] mem_data_sel, // Memory data select: 00=AC, 01=PC, 10=X (for STA/CALL/STX)
-    input  logic       alu_b_sel, // ALU B input select: 0=mem_data, 1=constant 1 (for INC/DEC)
+    input  logic [1:0] mem_data_sel, // Memory data select: 00=AC, 01=PC, 10=X, 11=Y
+    input  logic [1:0] alu_b_sel, // ALU B input select: 00=mem_data, 01=constant 1 (INC/DEC), 10=X (MUL)
     // X Register Extension signals
     input  logic       x_load,    // Load X register
     input  logic       x_inc,     // Increment X register
     input  logic       x_to_ac,   // Transfer X to AC (TXA)
     input  logic       indexed_mode, // Use indexed addressing (addr + X)
+    // Y Register Extension signals
+    input  logic       y_load,    // Load Y register
+    input  logic       y_inc,     // Increment Y register
+    input  logic       y_to_ac,   // Transfer Y to AC (TYA)
+    input  logic       indexed_mode_y, // Use indexed addressing (addr + Y)
+    input  logic       mul_to_y,  // Load Y with high byte of multiplication result
 
     // External RAM Interface
     input  logic [7:0] mem_data_in,
@@ -197,33 +229,38 @@ module neander_datapath (
     output logic [7:0] dbg_ac,
     output logic [7:0] dbg_ri,
     output logic [7:0] dbg_sp,
-    output logic [7:0] dbg_x      // X register debug output
+    output logic [7:0] dbg_x,     // X register debug output
+    output logic [7:0] dbg_y      // Y register debug output
 );
 
     // Internal Signals (using 'logic' for everything)
-    logic [7:0] pc, rem, rdm, ri, ac, sp, x;  // Added X register
+    logic [7:0] pc, rem, rdm, ri, ac, sp, x, y;  // Added X and Y registers
     logic [7:0] alu_res;
+    logic [7:0] alu_mul_high;  // High byte of multiplication result from ALU
     logic       alu_carry;  // Carry output from ALU
     logic [7:0] alu_b_in;  // ALU B input (mem_data or constant 1)
     logic [7:0] addr_mux;
     logic [7:0] addr_indexed;  // Address + X for indexed modes
+    logic [7:0] addr_indexed_y; // Address + Y for indexed modes
     logic [7:0] ac_in;
     logic [7:0] x_in;     // X register input (from AC for TAX, or from memory for LDX)
+    logic [7:0] y_in;     // Y register input (from AC for TAY, or from memory for LDY)
     logic       N_in, Z_in, C_in;
 
-    // Indexed address calculation: addr + X
+    // Indexed address calculation: addr + X or addr + Y
     assign addr_indexed = rdm + x;
+    assign addr_indexed_y = rdm + y;
 
     // Direct assignments
-    // Memory address: use indexed address when indexed_mode is set
-    assign mem_addr     = indexed_mode ? (rem + x) : rem;
-    // Memory data output MUX: 00=AC (STA/PUSH), 01=PC (CALL), 10=X (STX)
+    // Memory address: use indexed address when indexed_mode or indexed_mode_y is set
+    assign mem_addr = indexed_mode_y ? (rem + y) : (indexed_mode ? (rem + x) : rem);
+    // Memory data output MUX: 00=AC (STA/PUSH), 01=PC (CALL), 10=X (STX), 11=Y (STY)
     always_comb begin
         case (mem_data_sel)
             2'b00:   mem_data_out = ac;   // STA, PUSH
             2'b01:   mem_data_out = pc;   // CALL (return address)
             2'b10:   mem_data_out = x;    // STX
-            default: mem_data_out = ac;
+            2'b11:   mem_data_out = y;    // STY
         endcase
     end
     assign io_out       = ac;
@@ -237,6 +274,7 @@ module neander_datapath (
     assign dbg_ri = ri;
     assign dbg_sp = sp;
     assign dbg_x  = x;  // X register debug output
+    assign dbg_y  = y;  // Y register debug output
 
     // --- Instantiations ---
 
@@ -265,6 +303,22 @@ module neander_datapath (
     // Otherwise (LDX/LDXI), input comes from memory/immediate
     assign x_in = (opcode == 4'h7 && sub_opcode == 4'hD) ? ac : mem_data_in;
 
+    // Y Index Register
+    // Input can be from memory (LDY), immediate (LDYI), or AC (TAY)
+    y_reg u_y (
+        .clk(clk), .reset(reset),
+        .y_load(y_load), .y_inc(y_inc),
+        .data_in(y_in), .y_value(y)
+    );
+
+    // Y register input mux: select between mem_data_in (LDY/LDYI), AC (TAY), or mul_high (MUL)
+    // Priority: mul_to_y > TAY > LDY/LDYI
+    // When mul_to_y is set, input comes from ALU mul_high (MUL instruction)
+    // When opcode is 0x0 and sub_opcode is 0x3 (TAY), input comes from AC
+    // Otherwise (LDY/LDYI), input comes from memory/immediate
+    assign y_in = mul_to_y ? alu_mul_high :
+                  (opcode == 4'h0 && sub_opcode == 4'h3) ? ac : mem_data_in;
+
     mux_addr u_mux (
         .sel(addr_sel), .pc(pc), .rdm(rdm), .sp(sp), .out(addr_mux)
     );
@@ -286,11 +340,19 @@ module neander_datapath (
         .data_in(rdm), .value(ri)
     );
 
-    // ALU B input MUX: select between mem_data_in (0) and constant 1 (1) for INC/DEC
-    assign alu_b_in = alu_b_sel ? 8'h01 : mem_data_in;
+    // ALU B input MUX: select between mem_data_in (00), constant 1 (01) for INC/DEC, X (10) for MUL
+    always_comb begin
+        case (alu_b_sel)
+            2'b00:   alu_b_in = mem_data_in;  // Default: memory data
+            2'b01:   alu_b_in = 8'h01;        // Constant 1 for INC/DEC
+            2'b10:   alu_b_in = x;            // X register for MUL
+            default: alu_b_in = mem_data_in;
+        endcase
+    end
 
     neander_alu u_alu (
-        .a(ac), .b(alu_b_in), .alu_op(alu_op), .result(alu_res), .carry_out(alu_carry)
+        .a(ac), .b(alu_b_in), .alu_op(alu_op), .result(alu_res),
+        .mul_high(alu_mul_high), .carry_out(alu_carry)
     );
 
     // Combinational Logic for AC Input Mux
@@ -299,8 +361,12 @@ module neander_datapath (
             // TXA: Transfer X to AC
             ac_in = x;
         end
+        else if (y_to_ac) begin
+            // TYA: Transfer Y to AC
+            ac_in = y;
+        end
         else if (opcode == 4'h2 || opcode == 4'hE) begin
-            // LDA or LDI (including indexed LDA when sub_opcode[0]=1)
+            // LDA or LDI (including indexed LDA when sub_opcode[0]=1 or sub_opcode[1]=1)
             ac_in = mem_data_in;
         end
         else if (opcode == 4'h7 && sub_opcode == 4'h1) begin
