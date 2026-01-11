@@ -45,6 +45,15 @@
 //   0x80: JMP addr  - Unconditional jump
 //   0x81: JC addr   - Jump if Carry flag set
 //   0x82: JNC addr  - Jump if Carry flag clear
+//
+// Signed Comparison Jumps (after CMP instruction):
+//   0x83: JLE addr  - Jump if Less or Equal (N=1 OR Z=1)
+//   0x84: JGT addr  - Jump if Greater Than (N=0 AND Z=0)
+//   0x85: JGE addr  - Jump if Greater or Equal (N=0)
+//
+// Unsigned Comparison Jumps (after CMP instruction):
+//   0x86: JBE addr  - Jump if Below or Equal (C=1 OR Z=1)
+//   0x87: JA addr   - Jump if Above (C=0 AND Z=0)
 // ============================================================================
 
 module neander_control (
@@ -87,7 +96,7 @@ module neander_control (
 );
 
     // Using ENUM for states (Easier to debug in Waveforms)
-    typedef enum logic [6:0] {  // Extended to 7 bits for all extension states
+    typedef enum logic [7:0] {  // Extended to 8 bits for all extension states
         S_FETCH_1, S_FETCH_2, S_FETCH_3, S_DECODE,
         S_LDA_1, S_LDA_2, S_LDA_3, S_LDA_4,
         S_STA_1, S_STA_2, S_STA_3, S_STA_4,
@@ -128,6 +137,13 @@ module neander_control (
         S_CMP_1, S_CMP_2, S_CMP_3, S_CMP_4,  // CMP addr (0x02) - compare, set flags only
         S_JC_1,  S_JC_2,  S_JC_3,             // JC addr (0x81) - jump if carry
         S_JNC_1, S_JNC_2, S_JNC_3,            // JNC addr (0x82) - jump if no carry
+        // Signed comparison jumps
+        S_JLE_1, S_JLE_2, S_JLE_3,            // JLE addr (0x83) - jump if less or equal (N=1 OR Z=1)
+        S_JGT_1, S_JGT_2, S_JGT_3,            // JGT addr (0x84) - jump if greater than (N=0 AND Z=0)
+        S_JGE_1, S_JGE_2, S_JGE_3,            // JGE addr (0x85) - jump if greater or equal (N=0)
+        // Unsigned comparison jumps
+        S_JBE_1, S_JBE_2, S_JBE_3,            // JBE addr (0x86) - jump if below or equal (C=1 OR Z=1)
+        S_JA_1,  S_JA_2,  S_JA_3,             // JA addr (0x87) - jump if above (C=0 AND Z=0)
         // Y Register Extension states
         S_LDY_1, S_LDY_2, S_LDY_3, S_LDY_4,  // LDY addr (0x07)
         S_STY_1, S_STY_2, S_STY_3, S_STY_4,  // STY addr (0x08)
@@ -269,11 +285,18 @@ module neander_control (
                             default: next_state = S_FETCH_1;
                         endcase
                     end
-                    4'h8: begin  // JMP family + carry-based jumps
+                    4'h8: begin  // JMP family + carry-based jumps + comparison jumps
                         case (sub_opcode)
                             4'h0: next_state = S_JMP_1;   // JMP  (0x80)
                             4'h1: next_state = S_JC_1;    // JC   (0x81)
                             4'h2: next_state = S_JNC_1;   // JNC  (0x82)
+                            // Signed comparison jumps (after CMP)
+                            4'h3: next_state = S_JLE_1;   // JLE  (0x83)
+                            4'h4: next_state = S_JGT_1;   // JGT  (0x84)
+                            4'h5: next_state = S_JGE_1;   // JGE  (0x85)
+                            // Unsigned comparison jumps (after CMP)
+                            4'h6: next_state = S_JBE_1;   // JBE  (0x86)
+                            4'h7: next_state = S_JA_1;    // JA   (0x87)
                             default: next_state = S_JMP_1; // Default to JMP for backward compat
                         endcase
                     end
@@ -813,6 +836,84 @@ module neander_control (
             S_JNC_3: begin
                 if (!flagC) pc_load = 1;
                 else        pc_inc  = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // SIGNED COMPARISON JUMPS (after CMP instruction)
+            // ================================================================
+
+            // --- JLE addr (0x83) ---
+            // Jump if Less or Equal (signed): N=1 OR Z=1
+            S_JLE_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JLE_2;
+            end
+            S_JLE_2: begin
+                mem_read = 1; rdm_load = 1; next_state = S_JLE_3;
+            end
+            S_JLE_3: begin
+                if (flagN || flagZ) pc_load = 1;
+                else                pc_inc  = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // --- JGT addr (0x84) ---
+            // Jump if Greater Than (signed): N=0 AND Z=0
+            S_JGT_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JGT_2;
+            end
+            S_JGT_2: begin
+                mem_read = 1; rdm_load = 1; next_state = S_JGT_3;
+            end
+            S_JGT_3: begin
+                if (!flagN && !flagZ) pc_load = 1;
+                else                  pc_inc  = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // --- JGE addr (0x85) ---
+            // Jump if Greater or Equal (signed): N=0
+            S_JGE_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JGE_2;
+            end
+            S_JGE_2: begin
+                mem_read = 1; rdm_load = 1; next_state = S_JGE_3;
+            end
+            S_JGE_3: begin
+                if (!flagN) pc_load = 1;
+                else        pc_inc  = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // UNSIGNED COMPARISON JUMPS (after CMP instruction)
+            // ================================================================
+
+            // --- JBE addr (0x86) ---
+            // Jump if Below or Equal (unsigned): C=1 OR Z=1
+            S_JBE_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JBE_2;
+            end
+            S_JBE_2: begin
+                mem_read = 1; rdm_load = 1; next_state = S_JBE_3;
+            end
+            S_JBE_3: begin
+                if (flagC || flagZ) pc_load = 1;
+                else                pc_inc  = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // --- JA addr (0x87) ---
+            // Jump if Above (unsigned): C=0 AND Z=0
+            S_JA_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JA_2;
+            end
+            S_JA_2: begin
+                mem_read = 1; rdm_load = 1; next_state = S_JA_3;
+            end
+            S_JA_3: begin
+                if (!flagC && !flagZ) pc_load = 1;
+                else                  pc_inc  = 1;
                 next_state = S_FETCH_1;
             end
 

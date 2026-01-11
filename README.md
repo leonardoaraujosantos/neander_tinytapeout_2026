@@ -22,10 +22,11 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - 8-bit data width and address space
 - Single accumulator architecture with X and Y index registers
 - Three condition flags (N: Negative, Z: Zero, C: Carry)
-- 45+ instructions including:
+- 50+ instructions including:
   - Stack operations (PUSH/POP/CALL/RET)
   - LCC extension (SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP)
   - Carry-based jumps (JC, JNC) for unsigned comparisons
+  - Comparison jumps (JLE, JGT, JGE, JBE, JA) for signed/unsigned comparisons
   - X register operations (LDX, STX, LDXI, TAX, TXA, INX)
   - Y register operations (LDY, STY, LDYI, TAY, TYA, INY)
   - Indexed addressing modes (LDA/STA addr,X and LDA/STA addr,Y)
@@ -94,6 +95,36 @@ These instructions enable unsigned comparisons using the carry flag:
 | 0x82 | JNC addr | if !C: PC <- addr | - |
 
 **Note:** The ADD instruction also updates the carry flag (C) on overflow.
+
+### Comparison Jump Instructions
+
+These instructions are used after CMP to implement signed and unsigned comparisons:
+
+#### Signed Comparisons
+
+| Opcode | Mnemonic | Condition | Description |
+|--------|----------|-----------|-------------|
+| 0x83 | JLE addr | N=1 OR Z=1 | Jump if Less or Equal |
+| 0x84 | JGT addr | N=0 AND Z=0 | Jump if Greater Than |
+| 0x85 | JGE addr | N=0 | Jump if Greater or Equal |
+
+#### Unsigned Comparisons
+
+| Opcode | Mnemonic | Condition | Description |
+|--------|----------|-----------|-------------|
+| 0x86 | JBE addr | C=1 OR Z=1 | Jump if Below or Equal |
+| 0x87 | JA addr | C=0 AND Z=0 | Jump if Above |
+
+**Usage:** Execute `CMP addr` first to set flags, then use the appropriate comparison jump.
+
+```assembly
+    LDA var_a       ; Load first value
+    CMP var_b       ; Compare with second value (sets N, Z, C flags)
+    JGT greater     ; Jump if var_a > var_b (signed)
+    ; ... else branch ...
+greater:
+    ; ... greater branch ...
+```
 
 ### X Register Extension (Indexed Addressing)
 

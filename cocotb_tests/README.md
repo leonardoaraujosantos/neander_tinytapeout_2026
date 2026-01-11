@@ -26,7 +26,7 @@ make SIM=verilator
 
 ## Testes Incluidos
 
-O arquivo de testes contém **99 testes automatizados** cobrindo todas as instruções do NEANDER-X.
+O arquivo de testes contém **114 testes automatizados** cobrindo todas as instruções do NEANDER-X.
 
 ### Testes Básicos
 
@@ -90,6 +90,26 @@ O arquivo de testes contém **99 testes automatizados** cobrindo todas as instru
 | `test_mul_factorial_5` | Calcula 5! = 120 |
 | `test_mul_power_of_2` | Calcula 2^8 = 256 |
 
+### Testes Comparison Jumps (JLE, JGT, JGE, JBE, JA)
+
+| Teste | Descrição |
+|-------|-----------|
+| `test_jle_taken_less` | JLE salta quando AC < valor (N=1) |
+| `test_jle_taken_equal` | JLE salta quando AC == valor (Z=1) |
+| `test_jle_not_taken` | JLE não salta quando AC > valor |
+| `test_jgt_taken` | JGT salta quando AC > valor (N=0, Z=0) |
+| `test_jgt_not_taken_less` | JGT não salta quando AC < valor |
+| `test_jgt_not_taken_equal` | JGT não salta quando AC == valor |
+| `test_jge_taken_greater` | JGE salta quando AC > valor (N=0) |
+| `test_jge_taken_equal` | JGE salta quando AC == valor |
+| `test_jge_not_taken` | JGE não salta quando AC < valor |
+| `test_jbe_taken_below` | JBE salta quando AC < valor unsigned (C=1) |
+| `test_jbe_taken_equal` | JBE salta quando AC == valor (Z=1) |
+| `test_jbe_not_taken` | JBE não salta quando AC > valor unsigned |
+| `test_ja_taken` | JA salta quando AC > valor unsigned (C=0, Z=0) |
+| `test_ja_not_taken_below` | JA não salta quando AC < valor unsigned |
+| `test_ja_not_taken_equal` | JA não salta quando AC == valor |
+
 ## Instruction Set Reference
 
 ### Instruções Básicas (Neander Original)
@@ -135,6 +155,11 @@ O arquivo de testes contém **99 testes automatizados** cobrindo todas as instru
 | 0x79 | SHR | AC = AC >> 1 (C = LSB) |
 | 0x81 | JC addr | if (C) PC = addr |
 | 0x82 | JNC addr | if (!C) PC = addr |
+| 0x83 | JLE addr | if (N=1 OR Z=1) PC = addr |
+| 0x84 | JGT addr | if (N=0 AND Z=0) PC = addr |
+| 0x85 | JGE addr | if (N=0) PC = addr |
+| 0x86 | JBE addr | if (C=1 OR Z=1) PC = addr |
+| 0x87 | JA addr | if (C=0 AND Z=0) PC = addr |
 
 ### X Register Extension
 

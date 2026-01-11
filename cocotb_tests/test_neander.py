@@ -76,6 +76,13 @@ class Op:
     JMP  = 0x80
     JC   = 0x81  # JC addr: jump if carry flag set
     JNC  = 0x82  # JNC addr: jump if carry flag clear
+    # Signed comparison jumps (after CMP)
+    JLE  = 0x83  # JLE addr: jump if less or equal (N=1 OR Z=1)
+    JGT  = 0x84  # JGT addr: jump if greater than (N=0 AND Z=0)
+    JGE  = 0x85  # JGE addr: jump if greater or equal (N=0)
+    # Unsigned comparison jumps (after CMP)
+    JBE  = 0x86  # JBE addr: jump if below or equal (C=1 OR Z=1)
+    JA   = 0x87  # JA addr: jump if above (C=0 AND Z=0)
     JN   = 0x90
     JZ   = 0xA0
     JNZ  = 0xB0
@@ -3910,4 +3917,539 @@ async def test_mul_power_of_2(dut):
     dut._log.info(f"2^8 high byte = 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Power of 2 test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
 
+    dut._log.info("Test PASSED!")
+
+
+# =============================================================================
+# Comparison Jump Tests (JLE, JGT, JGE, JBE, JA)
+# =============================================================================
+
+# JLE Tests (Jump if Less or Equal - signed: N=1 OR Z=1)
+
+@cocotb.test()
+async def test_jle_taken_less(dut):
+    """Test JLE: jump when AC < value (N=1 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # CMP sets flags based on AC - MEM[addr]
+    # If AC (5) < MEM (10), result is negative -> N=1 -> JLE taken
+    program = [
+        Op.LDI, 10,         # 0x00: AC = 10
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 10
+        Op.LDI, 5,          # 0x04: AC = 5
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 5 - 10 = -5 (N=1)
+        Op.JLE, 0x10,       # 0x08: Jump to success if N=1 or Z=1
+        Op.LDI, 0xFF,       # 0x0A: Failure marker
+        Op.OUT, 0x00,       # 0x0C: Output failure
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10):
+        Op.LDI, 0x4C,       # 0x10: Success marker (76)
+        Op.OUT, 0x00,       # 0x12: Output success
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x4C
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JLE (less): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JLE taken (less) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jle_taken_equal(dut):
+    """Test JLE: jump when AC == value (Z=1 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (10) == MEM (10), result is zero -> Z=1 -> JLE taken
+    program = [
+        Op.LDI, 10,         # 0x00: AC = 10
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 10
+        Op.CMP, ADDR_VAL,   # 0x04: Compare 10 - 10 = 0 (Z=1)
+        Op.JLE, 0x0E,       # 0x06: Jump to success if N=1 or Z=1
+        Op.LDI, 0xFF,       # 0x08: Failure marker
+        Op.OUT, 0x00,       # 0x0A: Output failure
+        Op.HLT, 0x00,       # 0x0C: Halt (with padding)
+        # Jump target (0x0E):
+        Op.LDI, 0x4D,       # 0x0E: Success marker (77)
+        Op.OUT, 0x00,       # 0x10: Output success
+        Op.HLT, 0x00,       # 0x12: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x4D
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JLE (equal): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JLE taken (equal) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jle_not_taken(dut):
+    """Test JLE: don't jump when AC > value (N=0 and Z=0 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (10) > MEM (5), result is positive -> N=0, Z=0 -> JLE NOT taken
+    program = [
+        Op.LDI, 5,          # 0x00: AC = 5
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 5
+        Op.LDI, 10,         # 0x04: AC = 10
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 10 - 5 = 5 (N=0, Z=0)
+        Op.JLE, 0x10,       # 0x08: Should NOT jump
+        Op.LDI, 0x4E,       # 0x0A: Success marker (78)
+        Op.OUT, 0x00,       # 0x0C: Output success
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10) - should not reach:
+        Op.LDI, 0xFF,       # 0x10: Failure marker
+        Op.OUT, 0x00,       # 0x12: Output failure
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x4E
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JLE (not taken): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JLE not taken failed"
+    dut._log.info("Test PASSED!")
+
+
+# JGT Tests (Jump if Greater Than - signed: N=0 AND Z=0)
+
+@cocotb.test()
+async def test_jgt_taken(dut):
+    """Test JGT: jump when AC > value (N=0 and Z=0 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (10) > MEM (5), result is positive -> N=0, Z=0 -> JGT taken
+    program = [
+        Op.LDI, 5,          # 0x00: AC = 5
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 5
+        Op.LDI, 10,         # 0x04: AC = 10
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 10 - 5 = 5 (N=0, Z=0)
+        Op.JGT, 0x10,       # 0x08: Jump to success if N=0 and Z=0
+        Op.LDI, 0xFF,       # 0x0A: Failure marker
+        Op.OUT, 0x00,       # 0x0C: Output failure
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10):
+        Op.LDI, 0x50,       # 0x10: Success marker (80)
+        Op.OUT, 0x00,       # 0x12: Output success
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x50
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JGT (taken): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JGT taken failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jgt_not_taken_less(dut):
+    """Test JGT: don't jump when AC < value (N=1 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (5) < MEM (10), result is negative -> N=1 -> JGT NOT taken
+    program = [
+        Op.LDI, 10,         # 0x00: AC = 10
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 10
+        Op.LDI, 5,          # 0x04: AC = 5
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 5 - 10 = -5 (N=1)
+        Op.JGT, 0x10,       # 0x08: Should NOT jump
+        Op.LDI, 0x51,       # 0x0A: Success marker (81)
+        Op.OUT, 0x00,       # 0x0C: Output success
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10) - should not reach:
+        Op.LDI, 0xFF,       # 0x10: Failure marker
+        Op.OUT, 0x00,       # 0x12: Output failure
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x51
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JGT (not taken, less): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JGT not taken (less) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jgt_not_taken_equal(dut):
+    """Test JGT: don't jump when AC == value (Z=1 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (10) == MEM (10), result is zero -> Z=1 -> JGT NOT taken
+    program = [
+        Op.LDI, 10,         # 0x00: AC = 10
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 10
+        Op.CMP, ADDR_VAL,   # 0x04: Compare 10 - 10 = 0 (Z=1)
+        Op.JGT, 0x0E,       # 0x06: Should NOT jump
+        Op.LDI, 0x52,       # 0x08: Success marker (82)
+        Op.OUT, 0x00,       # 0x0A: Output success
+        Op.HLT, 0x00,       # 0x0C: Halt (with padding)
+        # Jump target (0x0E) - should not reach:
+        Op.LDI, 0xFF,       # 0x0E: Failure marker
+        Op.OUT, 0x00,       # 0x10: Output failure
+        Op.HLT, 0x00,       # 0x12: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x52
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JGT (not taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JGT not taken (equal) failed"
+    dut._log.info("Test PASSED!")
+
+
+# JGE Tests (Jump if Greater or Equal - signed: N=0)
+
+@cocotb.test()
+async def test_jge_taken_greater(dut):
+    """Test JGE: jump when AC > value (N=0 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (10) > MEM (5), result is positive -> N=0 -> JGE taken
+    program = [
+        Op.LDI, 5,          # 0x00: AC = 5
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 5
+        Op.LDI, 10,         # 0x04: AC = 10
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 10 - 5 = 5 (N=0)
+        Op.JGE, 0x10,       # 0x08: Jump to success if N=0
+        Op.LDI, 0xFF,       # 0x0A: Failure marker
+        Op.OUT, 0x00,       # 0x0C: Output failure
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10):
+        Op.LDI, 0x53,       # 0x10: Success marker (83)
+        Op.OUT, 0x00,       # 0x12: Output success
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x53
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JGE (taken, greater): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JGE taken (greater) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jge_taken_equal(dut):
+    """Test JGE: jump when AC == value (Z=1, N=0 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (10) == MEM (10), result is zero -> Z=1, N=0 -> JGE taken
+    program = [
+        Op.LDI, 10,         # 0x00: AC = 10
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 10
+        Op.CMP, ADDR_VAL,   # 0x04: Compare 10 - 10 = 0 (Z=1, N=0)
+        Op.JGE, 0x0E,       # 0x06: Jump to success if N=0
+        Op.LDI, 0xFF,       # 0x08: Failure marker
+        Op.OUT, 0x00,       # 0x0A: Output failure
+        Op.HLT, 0x00,       # 0x0C: Halt (with padding)
+        # Jump target (0x0E):
+        Op.LDI, 0x54,       # 0x0E: Success marker (84)
+        Op.OUT, 0x00,       # 0x10: Output success
+        Op.HLT, 0x00,       # 0x12: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x54
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JGE (taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JGE taken (equal) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jge_not_taken(dut):
+    """Test JGE: don't jump when AC < value (N=1 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (5) < MEM (10), result is negative -> N=1 -> JGE NOT taken
+    program = [
+        Op.LDI, 10,         # 0x00: AC = 10
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 10
+        Op.LDI, 5,          # 0x04: AC = 5
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 5 - 10 = -5 (N=1)
+        Op.JGE, 0x10,       # 0x08: Should NOT jump
+        Op.LDI, 0x55,       # 0x0A: Success marker (85)
+        Op.OUT, 0x00,       # 0x0C: Output success
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10) - should not reach:
+        Op.LDI, 0xFF,       # 0x10: Failure marker
+        Op.OUT, 0x00,       # 0x12: Output failure
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x55
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JGE (not taken): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JGE not taken failed"
+    dut._log.info("Test PASSED!")
+
+
+# JBE Tests (Jump if Below or Equal - unsigned: C=1 OR Z=1)
+
+@cocotb.test()
+async def test_jbe_taken_below(dut):
+    """Test JBE: jump when AC < value unsigned (C=1 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # Unsigned comparison: 5 < 200 -> borrow -> C=1 -> JBE taken
+    program = [
+        Op.LDI, 200,        # 0x00: AC = 200
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 200
+        Op.LDI, 5,          # 0x04: AC = 5
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 5 - 200 (borrow, C=1)
+        Op.JBE, 0x10,       # 0x08: Jump to success if C=1 or Z=1
+        Op.LDI, 0xFF,       # 0x0A: Failure marker
+        Op.OUT, 0x00,       # 0x0C: Output failure
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10):
+        Op.LDI, 0x56,       # 0x10: Success marker (86)
+        Op.OUT, 0x00,       # 0x12: Output success
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x56
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JBE (taken, below): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JBE taken (below) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jbe_taken_equal(dut):
+    """Test JBE: jump when AC == value (Z=1 after CMP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (100) == MEM (100), result is zero -> Z=1 -> JBE taken
+    program = [
+        Op.LDI, 100,        # 0x00: AC = 100
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 100
+        Op.CMP, ADDR_VAL,   # 0x04: Compare 100 - 100 = 0 (Z=1)
+        Op.JBE, 0x0E,       # 0x06: Jump to success if C=1 or Z=1
+        Op.LDI, 0xFF,       # 0x08: Failure marker
+        Op.OUT, 0x00,       # 0x0A: Output failure
+        Op.HLT, 0x00,       # 0x0C: Halt (with padding)
+        # Jump target (0x0E):
+        Op.LDI, 0x57,       # 0x0E: Success marker (87)
+        Op.OUT, 0x00,       # 0x10: Output success
+        Op.HLT, 0x00,       # 0x12: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x57
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JBE (taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JBE taken (equal) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_jbe_not_taken(dut):
+    """Test JBE: don't jump when AC > value unsigned (C=0 and Z=0)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # Unsigned comparison: 200 > 5 -> no borrow -> C=0, Z=0 -> JBE NOT taken
+    program = [
+        Op.LDI, 5,          # 0x00: AC = 5
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 5
+        Op.LDI, 200,        # 0x04: AC = 200
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 200 - 5 = 195 (no borrow, C=0)
+        Op.JBE, 0x10,       # 0x08: Should NOT jump
+        Op.LDI, 0x58,       # 0x0A: Success marker (88)
+        Op.OUT, 0x00,       # 0x0C: Output success
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10) - should not reach:
+        Op.LDI, 0xFF,       # 0x10: Failure marker
+        Op.OUT, 0x00,       # 0x12: Output failure
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x58
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JBE (not taken): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JBE not taken failed"
+    dut._log.info("Test PASSED!")
+
+
+# JA Tests (Jump if Above - unsigned: C=0 AND Z=0)
+
+@cocotb.test()
+async def test_ja_taken(dut):
+    """Test JA: jump when AC > value unsigned (C=0 and Z=0)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # Unsigned comparison: 200 > 5 -> no borrow -> C=0, Z=0 -> JA taken
+    program = [
+        Op.LDI, 5,          # 0x00: AC = 5
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 5
+        Op.LDI, 200,        # 0x04: AC = 200
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 200 - 5 = 195 (no borrow, C=0)
+        Op.JA, 0x10,        # 0x08: Jump to success if C=0 and Z=0
+        Op.LDI, 0xFF,       # 0x0A: Failure marker
+        Op.OUT, 0x00,       # 0x0C: Output failure
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10):
+        Op.LDI, 0x59,       # 0x10: Success marker (89)
+        Op.OUT, 0x00,       # 0x12: Output success
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x59
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JA (taken): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JA taken failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_ja_not_taken_below(dut):
+    """Test JA: don't jump when AC < value unsigned (C=1)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # Unsigned comparison: 5 < 200 -> borrow -> C=1 -> JA NOT taken
+    program = [
+        Op.LDI, 200,        # 0x00: AC = 200
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 200
+        Op.LDI, 5,          # 0x04: AC = 5
+        Op.CMP, ADDR_VAL,   # 0x06: Compare 5 - 200 (borrow, C=1)
+        Op.JA, 0x10,        # 0x08: Should NOT jump
+        Op.LDI, 0x5A,       # 0x0A: Success marker (90)
+        Op.OUT, 0x00,       # 0x0C: Output success
+        Op.HLT, 0x00,       # 0x0E: Halt (with padding)
+        # Jump target (0x10) - should not reach:
+        Op.LDI, 0xFF,       # 0x10: Failure marker
+        Op.OUT, 0x00,       # 0x12: Output failure
+        Op.HLT, 0x00,       # 0x14: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x5A
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JA (not taken, below): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JA not taken (below) failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_ja_not_taken_equal(dut):
+    """Test JA: don't jump when AC == value (Z=1)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    ADDR_VAL = 0x80
+
+    # If AC (100) == MEM (100), result is zero -> Z=1 -> JA NOT taken
+    program = [
+        Op.LDI, 100,        # 0x00: AC = 100
+        Op.STA, ADDR_VAL,   # 0x02: MEM[0x80] = 100
+        Op.CMP, ADDR_VAL,   # 0x04: Compare 100 - 100 = 0 (Z=1)
+        Op.JA, 0x0E,        # 0x06: Should NOT jump
+        Op.LDI, 0x5B,       # 0x08: Success marker (91)
+        Op.OUT, 0x00,       # 0x0A: Output success
+        Op.HLT, 0x00,       # 0x0C: Halt (with padding)
+        # Jump target (0x0E) - should not reach:
+        Op.LDI, 0xFF,       # 0x0E: Failure marker
+        Op.OUT, 0x00,       # 0x10: Output failure
+        Op.HLT, 0x00,       # 0x12: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x5B
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"JA (not taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"JA not taken (equal) failed"
     dut._log.info("Test PASSED!")
