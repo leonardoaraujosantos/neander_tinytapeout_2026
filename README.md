@@ -6,14 +6,33 @@ A SystemVerilog implementation of the NEANDER-X educational 8-bit processor for 
 
 ## Overview
 
-NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://www.inf.ufrgs.br/arq/wiki/doku.php?id=neander) (Universidade Federal do Rio Grande do Sul) for teaching fundamental computer architecture concepts in Brazil. This implementation extends the original NEANDER with I/O instructions, immediate addressing, and stack operations.
+NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://www.inf.ufrgs.br/arq/wiki/doku.php?id=neander) (Universidade Federal do Rio Grande do Sul) for teaching fundamental computer architecture concepts in Brazil. This implementation (NEANDER-X) extends the original NEANDER with:
+
+- **I/O Instructions**: IN/OUT for external communication
+- **Immediate Addressing**: LDI for loading constants
+- **Stack Operations**: PUSH/POP/CALL/RET for subroutines
+- **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP for C compiler support
+- **X Register**: Index register with LDX, STX, LDXI, TAX, TXA, INX
+- **Y Register**: Second index register with LDY, STY, LDYI, TAY, TYA, INY
+- **Frame Pointer**: FP register with TSF, TFS, PUSH_FP, POP_FP for stack frame management
+- **Indexed Addressing**: LDA/STA with ,X, ,Y, and ,FP modes for array/pointer/local variable access
+- **Hardware Multiplication**: MUL instruction (AC * X -> Y:AC) with 16-bit result
 
 ### Key Features
 
 - 8-bit data width and address space
-- Single accumulator architecture
-- Two condition flags (N: Negative, Z: Zero)
-- 16 instructions including stack operations (PUSH/POP/CALL/RET)
+- Single accumulator architecture with X, Y, and FP registers
+- Three condition flags (N: Negative, Z: Zero, C: Carry)
+- 60+ instructions including:
+  - Stack operations (PUSH/POP/CALL/RET)
+  - LCC extension (SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP)
+  - Carry-based jumps (JC, JNC) for unsigned comparisons
+  - Comparison jumps (JLE, JGT, JGE, JBE, JA) for signed/unsigned comparisons
+  - X register operations (LDX, STX, LDXI, TAX, TXA, INX)
+  - Y register operations (LDY, STY, LDYI, TAY, TYA, INY)
+  - Frame pointer operations (TSF, TFS, PUSH_FP, POP_FP)
+  - Indexed addressing modes (LDA/STA with ,X, ,Y, and ,FP)
+  - Hardware multiplication (MUL: AC * X -> Y:AC, 16-bit result)
 - FSM-based control unit
 - External memory interface (32 bytes addressable via TinyTapeout pins)
 
@@ -53,6 +72,145 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 | 0x72 | CALL addr | SP--; MEM[SP] <- PC; PC <- addr | - |
 | 0x73 | RET | PC <- MEM[SP]; SP++ | - |
 
+### LCC Extension (C Compiler Support)
+
+These instructions extend the ALU capabilities to support C compiler code generation:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x01 | NEG | AC <- -AC (two's complement) | N, Z, C |
+| 0x02 | CMP addr | Compare AC with MEM[addr] (flags only) | N, Z, C |
+| 0x74 | SUB addr | AC <- AC - MEM[addr] | N, Z, C |
+| 0x75 | INC | AC <- AC + 1 | N, Z |
+| 0x76 | DEC | AC <- AC - 1 | N, Z |
+| 0x77 | XOR addr | AC <- AC ^ MEM[addr] | N, Z |
+| 0x78 | SHL | AC <- AC << 1 | N, Z |
+| 0x79 | SHR | AC <- AC >> 1 | N, Z |
+
+### Carry-Based Jump Instructions
+
+These instructions enable unsigned comparisons using the carry flag:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x81 | JC addr | if C: PC <- addr | - |
+| 0x82 | JNC addr | if !C: PC <- addr | - |
+
+**Note:** The ADD instruction also updates the carry flag (C) on overflow.
+
+### Comparison Jump Instructions
+
+These instructions are used after CMP to implement signed and unsigned comparisons:
+
+#### Signed Comparisons
+
+| Opcode | Mnemonic | Condition | Description |
+|--------|----------|-----------|-------------|
+| 0x83 | JLE addr | N=1 OR Z=1 | Jump if Less or Equal |
+| 0x84 | JGT addr | N=0 AND Z=0 | Jump if Greater Than |
+| 0x85 | JGE addr | N=0 | Jump if Greater or Equal |
+
+#### Unsigned Comparisons
+
+| Opcode | Mnemonic | Condition | Description |
+|--------|----------|-----------|-------------|
+| 0x86 | JBE addr | C=1 OR Z=1 | Jump if Below or Equal |
+| 0x87 | JA addr | C=0 AND Z=0 | Jump if Above |
+
+**Usage:** Execute `CMP addr` first to set flags, then use the appropriate comparison jump.
+
+```assembly
+    LDA var_a       ; Load first value
+    CMP var_b       ; Compare with second value (sets N, Z, C flags)
+    JGT greater     ; Jump if var_a > var_b (signed)
+    ; ... else branch ...
+greater:
+    ; ... greater branch ...
+```
+
+### X Register Extension (Indexed Addressing)
+
+The X index register enables efficient array access and pointer operations:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x7A | LDX addr | X <- MEM[addr] | - |
+| 0x7B | STX addr | MEM[addr] <- X | - |
+| 0x7C | LDXI imm | X <- imm | - |
+| 0x7D | TAX | X <- AC | - |
+| 0x7E | TXA | AC <- X | N, Z |
+| 0x7F | INX | X <- X + 1 | - |
+
+### Indexed Addressing Modes (X)
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x21 | LDA addr,X | AC <- MEM[addr + X] | N, Z |
+| 0x11 | STA addr,X | MEM[addr + X] <- AC | - |
+
+### Y Register Extension
+
+The Y index register provides a second index for dual-pointer operations:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x03 | TAY | Y <- AC | - |
+| 0x04 | TYA | AC <- Y | N, Z |
+| 0x05 | INY | Y <- Y + 1 | - |
+| 0x06 | LDYI imm | Y <- imm | - |
+| 0x07 | LDY addr | Y <- MEM[addr] | - |
+| 0x08 | STY addr | MEM[addr] <- Y | - |
+
+### Indexed Addressing Modes (Y)
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x22 | LDA addr,Y | AC <- MEM[addr + Y] | N, Z |
+| 0x12 | STA addr,Y | MEM[addr + Y] <- AC | - |
+
+### Frame Pointer Extension
+
+The Frame Pointer (FP) register enables efficient access to local variables and parameters in stack frames, essential for C compiler support:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x0A | TSF | FP <- SP (Transfer SP to FP) | - |
+| 0x0B | TFS | SP <- FP (Transfer FP to SP) | - |
+| 0x0C | PUSH_FP | SP--; MEM[SP] <- FP | - |
+| 0x0D | POP_FP | FP <- MEM[SP]; SP++ | - |
+
+### Indexed Addressing Modes (FP)
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x24 | LDA addr,FP | AC <- MEM[addr + FP] | N, Z |
+| 0x14 | STA addr,FP | MEM[addr + FP] <- AC | - |
+
+**Typical function prologue/epilogue pattern:**
+
+```assembly
+; Function prologue
+func:   PUSH_FP         ; Save caller's FP
+        TSF             ; FP = SP (set up new frame)
+
+        ; Access local variables via FP-indexed addressing
+        LDA 0x01,FP     ; Load first local (at FP+1)
+        STA 0x02,FP     ; Store to second local (at FP+2)
+
+; Function epilogue
+        TFS             ; SP = FP (deallocate locals)
+        POP_FP          ; Restore caller's FP
+        RET             ; Return to caller
+```
+
+### Hardware Multiplication
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x09 | MUL | Y:AC <- AC * X (16-bit result) | N, Z, C |
+
+The MUL instruction multiplies AC by X using a combinational 8x8 multiplier. The 16-bit result is stored with the high byte in Y and the low byte in AC. The carry flag is set if the result overflows 8 bits (high byte != 0).
+
 ## Architecture
 
 ```mermaid
@@ -64,13 +222,17 @@ graph TB
     subgraph Datapath
         PC[PC<br/>Program Counter]
         SP[SP<br/>Stack Pointer]
+        FP[FP<br/>Frame Pointer]
+        X[X<br/>Index Register]
+        Y[Y<br/>Index Register]
         RI[RI<br/>Instruction Reg]
         REM[REM<br/>Address Reg]
         RDM[RDM<br/>Data Reg]
         AC[AC<br/>Accumulator]
-        ALU[ALU<br/>+ & OR NOT]
-        NZ[N Z<br/>Flags]
+        ALU[ALU<br/>+ - * & OR ^ ~ << >>]
+        NZC[N Z C<br/>Flags]
         MUX[Address MUX<br/>PC/RDM/SP]
+        IDX[Indexed Addr<br/>REM + X/Y/FP]
     end
 
     subgraph External
@@ -81,20 +243,35 @@ graph TB
 
     FSM -->|control signals| Datapath
     RI -->|opcode| FSM
-    NZ -->|flags| FSM
+    NZC -->|flags| FSM
 
     PC --> MUX
     RDM --> MUX
     SP --> MUX
     MUX --> REM
-    REM -->|address| RAM
+    REM --> IDX
+    X --> IDX
+    Y --> IDX
+    FP --> IDX
+    IDX -->|address| RAM
     RAM -->|data| RDM
     RDM --> RI
     AC --> ALU
-    RAM -->|data| ALU
+    X --> ALU
     ALU --> AC
-    AC --> NZ
+    ALU --> Y
+    AC --> X
+    AC --> Y
+    X --> AC
+    Y --> AC
+    SP --> FP
+    FP --> SP
+    RAM -->|data| ALU
+    AC --> NZC
     AC -->|data| RAM
+    X -->|data| RAM
+    Y -->|data| RAM
+    FP -->|data| RAM
     IO_IN --> AC
     AC --> IO_OUT
 ```
@@ -107,10 +284,13 @@ tt_um_neander (TinyTapeout wrapper)
     ├── neander_datapath
     │   ├── pc_reg (Program Counter)
     │   ├── sp_reg (Stack Pointer)
+    │   ├── fp_reg (Frame Pointer)
+    │   ├── x_reg (X Index Register)
+    │   ├── y_reg (Y Index Register)
     │   ├── mux_addr (3-way Address MUX)
     │   ├── generic_reg (REM, RDM, RI, AC)
-    │   ├── neander_alu
-    │   └── nz_reg (Flags)
+    │   ├── neander_alu (ADD, SUB, MUL, AND, OR, XOR, NOT, SHL, SHR, NEG)
+    │   └── nzc_reg (N, Z, C Flags)
     └── neander_control (FSM)
 ```
 
@@ -247,6 +427,92 @@ Address  Code   Instruction
 ```
 
 Result: Output = 8
+
+## TinyTapeout Build Configuration
+
+### Tile Size
+
+The design size is configured in `info.yaml`. A single tile is approximately 167x108 um.
+
+```yaml
+# info.yaml
+tiles: "1x1"    # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2, 8x2
+```
+
+| Tile Size | Area (um²) | Use Case |
+|-----------|------------|----------|
+| 1x1 | ~18,000 | Small designs (<60% utilization) |
+| 1x2 | ~36,000 | Medium designs with combinational logic |
+| 2x2 | ~72,000 | Large designs with multiple features |
+
+**Current design**: With the hardware multiplier (MUL), the design uses ~64% of a 1x1 tile. If you add more features (like DIV), consider upgrading to 1x2.
+
+### Placement Density
+
+The placement density controls how tightly cells are packed during the place-and-route flow. This is configured in `src/config.json`:
+
+```json
+{
+  "PL_TARGET_DENSITY_PCT": 66
+}
+```
+
+| Density | Description |
+|---------|-------------|
+| 50-60% | Conservative, easy routing, recommended for complex designs |
+| 60-70% | Moderate, good balance between area and routability |
+| 70-80% | Aggressive, may cause routing congestion or timing issues |
+
+**Common errors:**
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| GPL-0302 | Design utilization > target density | Increase `PL_TARGET_DENSITY_PCT` or use larger tile |
+| DPL-0036 | No room for timing buffers after placement | Decrease density or use larger tile |
+
+**Note**: The actual utilization includes timing repair buffers (~5-10% extra). If your design is at 64% and density is 66%, timing repair may push it over the limit.
+
+### Running Hardening Locally
+
+To run the GDS hardening flow locally (requires LibreLane and PDK installed):
+
+```bash
+# From project root
+cd /path/to/neander_tinytapeout_2026
+
+# Run hardening with LibreLane
+librelane harden
+
+# Or specify the PDK explicitly
+librelane harden --pdk ihp-sg13g2
+```
+
+**Using Docker** (recommended, no local PDK installation needed):
+
+```bash
+# From project root
+docker run --rm -v $(pwd):/work -w /work \
+  ghcr.io/tinytapeout/tt-gds-action:ttihp26a \
+  librelane harden
+```
+
+**Output files** are generated in `runs/wokwi/` directory:
+- `*.gds` - Final GDSII layout
+- `*.lef` - Library Exchange Format
+- `*-signoff/` - Timing and DRC reports
+
+### Configuration Reference
+
+Key parameters in `src/config.json`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `PL_TARGET_DENSITY_PCT` | 60 | Target placement density (50-80) |
+| `CLOCK_PERIOD` | 20 | Clock period in ns (20ns = 50MHz) |
+| `PL_RESIZER_HOLD_SLACK_MARGIN` | 0.1 | Hold timing margin |
+| `GRT_RESIZER_HOLD_SLACK_MARGIN` | 0.05 | Global route hold margin |
+
+For more details, see the [LibreLane Configuration Documentation](https://librelane.readthedocs.io/en/latest/reference/configuration.html).
 
 ## What is Tiny Tapeout?
 
