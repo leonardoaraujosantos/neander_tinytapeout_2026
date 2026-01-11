@@ -34,6 +34,10 @@ module tt_um_cpu_leonardoaraujosantos (
   wire [7:0] dbg_pc;
   wire [7:0] dbg_ac;
   wire [7:0] dbg_ri;
+  wire [7:0] dbg_sp;
+  wire [7:0] dbg_x;
+  wire [7:0] dbg_y;
+  wire [7:0] dbg_fp;
 
   // I/O status directly from dedicated inputs (directly from software, directly from external)
   // For now directly from zero (directly from unused, directly from placeholder)
@@ -63,7 +67,11 @@ module tt_um_cpu_leonardoaraujosantos (
     // Debug outputs
     .dbg_pc(dbg_pc),
     .dbg_ac(dbg_ac),
-    .dbg_ri(dbg_ri)
+    .dbg_ri(dbg_ri),
+    .dbg_sp(dbg_sp),
+    .dbg_x(dbg_x),
+    .dbg_y(dbg_y),
+    .dbg_fp(dbg_fp)
   );
 
   // ============================================================================
@@ -88,6 +96,6 @@ module tt_um_cpu_leonardoaraujosantos (
   assign mem_data_in = uio_in;         // Data from external RAM to CPU
 
   // List all unused inputs to prevent warnings
-  wire _unused = &{ena, mem_addr[7:5], io_out_internal, dbg_pc, dbg_ac, dbg_ri, 1'b0};
+  wire _unused = &{ena, mem_addr[7:5], io_out_internal, dbg_pc, dbg_ac, dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, 1'b0};
 
 endmodule
