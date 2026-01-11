@@ -428,6 +428,92 @@ Address  Code   Instruction
 
 Result: Output = 8
 
+## TinyTapeout Build Configuration
+
+### Tile Size
+
+The design size is configured in `info.yaml`. A single tile is approximately 167x108 um.
+
+```yaml
+# info.yaml
+tiles: "1x1"    # Valid values: 1x1, 1x2, 2x2, 3x2, 4x2, 6x2, 8x2
+```
+
+| Tile Size | Area (um²) | Use Case |
+|-----------|------------|----------|
+| 1x1 | ~18,000 | Small designs (<60% utilization) |
+| 1x2 | ~36,000 | Medium designs with combinational logic |
+| 2x2 | ~72,000 | Large designs with multiple features |
+
+**Current design**: With the hardware multiplier (MUL), the design uses ~64% of a 1x1 tile. If you add more features (like DIV), consider upgrading to 1x2.
+
+### Placement Density
+
+The placement density controls how tightly cells are packed during the place-and-route flow. This is configured in `src/config.json`:
+
+```json
+{
+  "PL_TARGET_DENSITY_PCT": 66
+}
+```
+
+| Density | Description |
+|---------|-------------|
+| 50-60% | Conservative, easy routing, recommended for complex designs |
+| 60-70% | Moderate, good balance between area and routability |
+| 70-80% | Aggressive, may cause routing congestion or timing issues |
+
+**Common errors:**
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| GPL-0302 | Design utilization > target density | Increase `PL_TARGET_DENSITY_PCT` or use larger tile |
+| DPL-0036 | No room for timing buffers after placement | Decrease density or use larger tile |
+
+**Note**: The actual utilization includes timing repair buffers (~5-10% extra). If your design is at 64% and density is 66%, timing repair may push it over the limit.
+
+### Running Hardening Locally
+
+To run the GDS hardening flow locally (requires LibreLane and PDK installed):
+
+```bash
+# From project root
+cd /path/to/neander_tinytapeout_2026
+
+# Run hardening with LibreLane
+librelane harden
+
+# Or specify the PDK explicitly
+librelane harden --pdk ihp-sg13g2
+```
+
+**Using Docker** (recommended, no local PDK installation needed):
+
+```bash
+# From project root
+docker run --rm -v $(pwd):/work -w /work \
+  ghcr.io/tinytapeout/tt-gds-action:ttihp26a \
+  librelane harden
+```
+
+**Output files** are generated in `runs/wokwi/` directory:
+- `*.gds` - Final GDSII layout
+- `*.lef` - Library Exchange Format
+- `*-signoff/` - Timing and DRC reports
+
+### Configuration Reference
+
+Key parameters in `src/config.json`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `PL_TARGET_DENSITY_PCT` | 60 | Target placement density (50-80) |
+| `CLOCK_PERIOD` | 20 | Clock period in ns (20ns = 50MHz) |
+| `PL_RESIZER_HOLD_SLACK_MARGIN` | 0.1 | Hold timing margin |
+| `GRT_RESIZER_HOLD_SLACK_MARGIN` | 0.05 | Global route hold margin |
+
+For more details, see the [LibreLane Configuration Documentation](https://librelane.readthedocs.io/en/latest/reference/configuration.html).
+
 ## What is Tiny Tapeout?
 
 Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
