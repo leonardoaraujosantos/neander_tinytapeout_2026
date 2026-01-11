@@ -27,6 +27,7 @@ module neander_tb_wrapper (
     output logic [7:0] dbg_sp,
     output logic [7:0] dbg_x,    // X register debug output
     output logic [7:0] dbg_y,    // Y register debug output
+    output logic [7:0] dbg_fp,   // FP register debug output
 
     // Memory read interface (for verification)
     input  logic [7:0] mem_read_addr,
@@ -83,7 +84,8 @@ module neander_tb_wrapper (
         .dbg_ri(dbg_ri),
         .dbg_sp(dbg_sp),
         .dbg_x(dbg_x),
-        .dbg_y(dbg_y)
+        .dbg_y(dbg_y),
+        .dbg_fp(dbg_fp)
     );
 
 endmodule

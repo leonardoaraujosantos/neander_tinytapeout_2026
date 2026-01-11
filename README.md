@@ -14,22 +14,24 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP for C compiler support
 - **X Register**: Index register with LDX, STX, LDXI, TAX, TXA, INX
 - **Y Register**: Second index register with LDY, STY, LDYI, TAY, TYA, INY
-- **Indexed Addressing**: LDA/STA with ,X and ,Y modes for array/pointer operations
+- **Frame Pointer**: FP register with TSF, TFS, PUSH_FP, POP_FP for stack frame management
+- **Indexed Addressing**: LDA/STA with ,X, ,Y, and ,FP modes for array/pointer/local variable access
 - **Hardware Multiplication**: MUL instruction (AC * X -> Y:AC) with 16-bit result
 
 ### Key Features
 
 - 8-bit data width and address space
-- Single accumulator architecture with X and Y index registers
+- Single accumulator architecture with X, Y, and FP registers
 - Three condition flags (N: Negative, Z: Zero, C: Carry)
-- 50+ instructions including:
+- 60+ instructions including:
   - Stack operations (PUSH/POP/CALL/RET)
   - LCC extension (SUB, INC, DEC, XOR, SHL, SHR, NEG, CMP)
   - Carry-based jumps (JC, JNC) for unsigned comparisons
   - Comparison jumps (JLE, JGT, JGE, JBE, JA) for signed/unsigned comparisons
   - X register operations (LDX, STX, LDXI, TAX, TXA, INX)
   - Y register operations (LDY, STY, LDYI, TAY, TYA, INY)
-  - Indexed addressing modes (LDA/STA addr,X and LDA/STA addr,Y)
+  - Frame pointer operations (TSF, TFS, PUSH_FP, POP_FP)
+  - Indexed addressing modes (LDA/STA with ,X, ,Y, and ,FP)
   - Hardware multiplication (MUL: AC * X -> Y:AC, 16-bit result)
 - FSM-based control unit
 - External memory interface (32 bytes addressable via TinyTapeout pins)
@@ -166,6 +168,41 @@ The Y index register provides a second index for dual-pointer operations:
 | 0x22 | LDA addr,Y | AC <- MEM[addr + Y] | N, Z |
 | 0x12 | STA addr,Y | MEM[addr + Y] <- AC | - |
 
+### Frame Pointer Extension
+
+The Frame Pointer (FP) register enables efficient access to local variables and parameters in stack frames, essential for C compiler support:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x0A | TSF | FP <- SP (Transfer SP to FP) | - |
+| 0x0B | TFS | SP <- FP (Transfer FP to SP) | - |
+| 0x0C | PUSH_FP | SP--; MEM[SP] <- FP | - |
+| 0x0D | POP_FP | FP <- MEM[SP]; SP++ | - |
+
+### Indexed Addressing Modes (FP)
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x24 | LDA addr,FP | AC <- MEM[addr + FP] | N, Z |
+| 0x14 | STA addr,FP | MEM[addr + FP] <- AC | - |
+
+**Typical function prologue/epilogue pattern:**
+
+```assembly
+; Function prologue
+func:   PUSH_FP         ; Save caller's FP
+        TSF             ; FP = SP (set up new frame)
+
+        ; Access local variables via FP-indexed addressing
+        LDA 0x01,FP     ; Load first local (at FP+1)
+        STA 0x02,FP     ; Store to second local (at FP+2)
+
+; Function epilogue
+        TFS             ; SP = FP (deallocate locals)
+        POP_FP          ; Restore caller's FP
+        RET             ; Return to caller
+```
+
 ### Hardware Multiplication
 
 | Opcode | Mnemonic | Operation | Flags |
@@ -185,6 +222,7 @@ graph TB
     subgraph Datapath
         PC[PC<br/>Program Counter]
         SP[SP<br/>Stack Pointer]
+        FP[FP<br/>Frame Pointer]
         X[X<br/>Index Register]
         Y[Y<br/>Index Register]
         RI[RI<br/>Instruction Reg]
@@ -194,7 +232,7 @@ graph TB
         ALU[ALU<br/>+ - * & OR ^ ~ << >>]
         NZC[N Z C<br/>Flags]
         MUX[Address MUX<br/>PC/RDM/SP]
-        IDX[Indexed Addr<br/>REM + X/Y]
+        IDX[Indexed Addr<br/>REM + X/Y/FP]
     end
 
     subgraph External
@@ -214,6 +252,7 @@ graph TB
     REM --> IDX
     X --> IDX
     Y --> IDX
+    FP --> IDX
     IDX -->|address| RAM
     RAM -->|data| RDM
     RDM --> RI
@@ -225,11 +264,14 @@ graph TB
     AC --> Y
     X --> AC
     Y --> AC
+    SP --> FP
+    FP --> SP
     RAM -->|data| ALU
     AC --> NZC
     AC -->|data| RAM
     X -->|data| RAM
     Y -->|data| RAM
+    FP -->|data| RAM
     IO_IN --> AC
     AC --> IO_OUT
 ```
@@ -242,6 +284,7 @@ tt_um_neander (TinyTapeout wrapper)
     ├── neander_datapath
     │   ├── pc_reg (Program Counter)
     │   ├── sp_reg (Stack Pointer)
+    │   ├── fp_reg (Frame Pointer)
     │   ├── x_reg (X Index Register)
     │   ├── y_reg (Y Index Register)
     │   ├── mux_addr (3-way Address MUX)

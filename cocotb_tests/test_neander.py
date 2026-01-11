@@ -43,6 +43,11 @@ class Op:
     LDY  = 0x07  # LDY addr: Y = MEM[addr]
     STY  = 0x08  # STY addr: MEM[addr] = Y
     MUL  = 0x09  # MUL: AC * X -> Y:AC (16-bit result)
+    # Frame Pointer Extension (opcode 0x0 family)
+    TSF  = 0x0A  # TSF: FP = SP (transfer SP to FP)
+    TFS  = 0x0B  # TFS: SP = FP (transfer FP to SP)
+    PUSH_FP = 0x0C  # PUSH_FP: MEM[--SP] = FP
+    POP_FP  = 0x0D  # POP_FP: FP = MEM[SP++]
     STA  = 0x10
     LDA  = 0x20
     ADD  = 0x30
@@ -73,6 +78,9 @@ class Op:
     # Indexed addressing modes (Y)
     LDA_Y = 0x22  # LDA addr,Y: AC = MEM[addr + Y]
     STA_Y = 0x12  # STA addr,Y: MEM[addr + Y] = AC
+    # Indexed addressing modes (FP)
+    LDA_FP = 0x24  # LDA addr,FP: AC = MEM[addr + FP]
+    STA_FP = 0x14  # STA addr,FP: MEM[addr + FP] = AC
     JMP  = 0x80
     JC   = 0x81  # JC addr: jump if carry flag set
     JNC  = 0x82  # JNC addr: jump if carry flag clear
@@ -4452,4 +4460,336 @@ async def test_ja_not_taken_equal(dut):
 
     dut._log.info(f"JA (not taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JA not taken (equal) failed"
+    dut._log.info("Test PASSED!")
+
+
+# ============================================================================
+# Frame Pointer Extension Tests
+# ============================================================================
+
+@cocotb.test()
+async def test_tsf_basic(dut):
+    """Test TSF: FP = SP (transfer SP to FP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # After reset, SP = 0xFF
+    # TSF should copy SP to FP
+    # Then PUSH to decrement SP, verify FP unchanged
+    program = [
+        Op.TSF,         # 0x00: FP = SP (FP should be 0xFF)
+        Op.LDI, 0x42,   # 0x01: AC = 0x42
+        Op.PUSH,        # 0x03: Push AC (SP becomes 0xFE)
+        Op.TFS,         # 0x04: SP = FP (restore SP to 0xFF)
+        Op.LDI, 0x00,   # 0x05: Clear AC
+        Op.POP,         # 0x07: Pop should get garbage (not 0x42) since SP was restored
+        Op.OUT, 0x00,   # 0x08: Output AC
+        Op.HLT, 0x00,   # 0x0A: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    # Wait for halt then check FP
+    await tb.run_until_halt(max_cycles=200)
+    fp_val = int(dut.dbg_fp.value)
+    dut._log.info(f"TSF test: FP=0x{fp_val:02X}, expected=0xFF")
+    assert fp_val == 0xFF, f"TSF failed: FP should be 0xFF, got 0x{fp_val:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_tfs_basic(dut):
+    """Test TFS: SP = FP (transfer FP to SP)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set FP to known value via TSF, modify SP with PUSH, restore with TFS
+    program = [
+        Op.TSF,         # 0x00: FP = SP (0xFF)
+        Op.LDI, 0x11,   # 0x01: AC = 0x11
+        Op.PUSH,        # 0x03: SP = 0xFE
+        Op.LDI, 0x22,   # 0x04: AC = 0x22
+        Op.PUSH,        # 0x06: SP = 0xFD
+        Op.TFS,         # 0x07: SP = FP (restore to 0xFF)
+        Op.HLT, 0x00,   # 0x08: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    await tb.run_until_halt(max_cycles=200)
+    sp_val = int(dut.dbg_sp.value)
+    dut._log.info(f"TFS test: SP=0x{sp_val:02X}, expected=0xFF")
+    assert sp_val == 0xFF, f"TFS failed: SP should be 0xFF, got 0x{sp_val:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_push_fp_basic(dut):
+    """Test PUSH_FP: MEM[--SP] = FP"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set FP to known value, push it, pop to AC, verify
+    program = [
+        Op.TSF,         # 0x00: FP = SP (0xFF)
+        Op.LDI, 0x33,   # 0x01: AC = 0x33
+        Op.PUSH,        # 0x03: Push 0x33, SP = 0xFE
+        Op.LDI, 0x44,   # 0x04: AC = 0x44
+        Op.PUSH,        # 0x06: Push 0x44, SP = 0xFD
+        Op.TSF,         # 0x07: FP = SP (0xFD) - capture current SP as FP
+        Op.PUSH_FP,     # 0x08: Push FP (0xFD), SP = 0xFC
+        Op.POP,         # 0x09: Pop to AC (should be 0xFD)
+        Op.OUT, 0x00,   # 0x0A: Output AC
+        Op.HLT, 0x00,   # 0x0C: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0xFD  # FP value that was pushed
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"PUSH_FP test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"PUSH_FP failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_pop_fp_basic(dut):
+    """Test POP_FP: FP = MEM[SP++]"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Push a value, pop it to FP, verify FP
+    program = [
+        Op.LDI, 0xAB,   # 0x00: AC = 0xAB
+        Op.PUSH,        # 0x02: Push 0xAB, SP = 0xFE
+        Op.POP_FP,      # 0x03: FP = 0xAB, SP = 0xFF
+        Op.HLT, 0x00,   # 0x04: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    await tb.run_until_halt(max_cycles=200)
+    fp_val = int(dut.dbg_fp.value)
+    sp_val = int(dut.dbg_sp.value)
+    dut._log.info(f"POP_FP test: FP=0x{fp_val:02X}, SP=0x{sp_val:02X}")
+    assert fp_val == 0xAB, f"POP_FP failed: FP should be 0xAB, got 0x{fp_val:02X}"
+    assert sp_val == 0xFF, f"POP_FP failed: SP should be 0xFF, got 0x{sp_val:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_lda_fp_indexed(dut):
+    """Test LDA addr,FP: AC = MEM[addr + FP]"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set up: FP = 0x10, store data at 0x80, read with base 0x70 + FP
+    ADDR_DATA = 0x80
+    ADDR_BASE = 0x70  # 0x70 + 0x10 = 0x80
+    DATA_VALUE = 0x5C
+
+    program = [
+        Op.LDI, DATA_VALUE,     # 0x00: AC = 0x5C
+        Op.STA, ADDR_DATA,      # 0x02: MEM[0x80] = 0x5C
+        Op.LDI, 0x10,           # 0x04: AC = 0x10
+        Op.PUSH,                # 0x06: Push 0x10
+        Op.POP_FP,              # 0x07: FP = 0x10
+        Op.LDI, 0x00,           # 0x08: Clear AC
+        Op.LDA_FP, ADDR_BASE,   # 0x0A: AC = MEM[0x70 + 0x10] = MEM[0x80]
+        Op.OUT, 0x00,           # 0x0C: Output AC
+        Op.HLT, 0x00,           # 0x0E: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = DATA_VALUE
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"LDA addr,FP test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"LDA addr,FP failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_sta_fp_indexed(dut):
+    """Test STA addr,FP: MEM[addr + FP] = AC"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set up: FP = 0x10, store data to base 0x70 + FP = 0x80
+    ADDR_BASE = 0x70
+    ADDR_TARGET = 0x80  # 0x70 + 0x10
+    DATA_VALUE = 0x7E
+
+    program = [
+        Op.LDI, 0x10,           # 0x00: AC = 0x10
+        Op.PUSH,                # 0x02: Push 0x10
+        Op.POP_FP,              # 0x03: FP = 0x10
+        Op.LDI, DATA_VALUE,     # 0x04: AC = 0x7E
+        Op.STA_FP, ADDR_BASE,   # 0x06: MEM[0x70 + 0x10] = 0x7E
+        Op.LDI, 0x00,           # 0x08: Clear AC
+        Op.LDA, ADDR_TARGET,    # 0x0A: AC = MEM[0x80]
+        Op.OUT, 0x00,           # 0x0C: Output AC
+        Op.HLT, 0x00,           # 0x0E: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = DATA_VALUE
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"STA addr,FP test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"STA addr,FP failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_function_prologue_epilogue(dut):
+    """Test complete function prologue/epilogue using FP"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Simulate a function call with prologue and epilogue:
+    # Prologue:
+    #   PUSH_FP      ; save caller's FP
+    #   TSF          ; FP = SP (new frame pointer)
+    # Epilogue:
+    #   TFS          ; SP = FP (deallocate locals)
+    #   POP_FP       ; restore caller's FP
+
+    program = [
+        # Main code
+        Op.LDI, 0xBB,       # 0x00: AC = 0xBB (initial FP marker)
+        Op.PUSH,            # 0x02: Push 0xBB
+        Op.POP_FP,          # 0x03: FP = 0xBB (simulate caller's FP)
+        Op.CALL, 0x10,      # 0x04: Call function at 0x10
+        # After return, check FP is restored
+        Op.LDI, 0x00,       # 0x06: Clear AC
+        Op.PUSH_FP,         # 0x08: Push current FP
+        Op.POP,             # 0x09: Pop to AC
+        Op.OUT, 0x00,       # 0x0A: Output FP value
+        Op.HLT, 0x00,       # 0x0C: Halt
+
+        # Padding
+        Op.NOP,             # 0x0E
+        Op.NOP,             # 0x0F
+
+        # Function at 0x10
+        # Prologue
+        Op.PUSH_FP,         # 0x10: Save caller's FP
+        Op.TSF,             # 0x11: FP = SP (set up new frame)
+        # Function body (allocate local by pushing)
+        Op.LDI, 0x77,       # 0x12: Local variable = 0x77
+        Op.PUSH,            # 0x14: Allocate local
+        # Epilogue
+        Op.TFS,             # 0x15: SP = FP (deallocate locals)
+        Op.POP_FP,          # 0x16: Restore caller's FP
+        Op.RET,             # 0x17: Return
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0xBB  # FP should be restored to caller's value
+    result = await tb.wait_for_io_write(max_cycles=1000)
+
+    dut._log.info(f"Function prologue/epilogue test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Function prologue/epilogue failed: FP not restored"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_fp_local_variable_access(dut):
+    """Test accessing local variables via FP-indexed addressing"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Simulate local variable access:
+    # FP points to frame base, locals are at positive offsets from FP
+    # Stack grows downward: PUSH decrements SP first, then writes
+
+    program = [
+        # Set up frame: SP=0xFF, after pushes SP will decrement
+        Op.LDI, 0xAA,       # 0x00: First local = 0xAA
+        Op.PUSH,            # 0x02: SP dec to 0xFE, MEM[0xFE] = 0xAA
+        Op.LDI, 0xBB,       # 0x03: Second local = 0xBB
+        Op.PUSH,            # 0x05: SP dec to 0xFD, MEM[0xFD] = 0xBB
+        Op.TSF,             # 0x06: FP = SP = 0xFD
+
+        # Now frame looks like:
+        # 0xFF: (unused)
+        # 0xFE: 0xAA (first pushed, offset +1 from FP)
+        # 0xFD: 0xBB (second pushed, FP points here, offset +0)
+
+        # Access first local (0xAA) using FP + 1
+        Op.LDI, 0x00,       # 0x07: Clear AC
+        Op.LDA_FP, 0x01,    # 0x09: AC = MEM[0xFD + 0x01] = MEM[0xFE] = 0xAA
+        Op.OUT, 0x00,       # 0x0B: Output first local
+        Op.HLT, 0x00,       # 0x0D: Halt
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0xAA  # First local variable
+    result = await tb.wait_for_io_write(max_cycles=500)
+
+    dut._log.info(f"FP local variable access test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"FP local variable access failed"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_fp_parameter_access(dut):
+    """Test accessing function parameters via FP-indexed addressing"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Simulate parameter passing:
+    # Push parameter, call function, access parameter via FP
+
+    program = [
+        # Main: push parameter and call
+        Op.LDI, 0x55,       # 0x00: Parameter value = 0x55
+        Op.PUSH,            # 0x02: Push parameter, SP = 0xFE
+        Op.CALL, 0x10,      # 0x03: Call function at 0x10
+        Op.HLT, 0x00,       # 0x05: Halt
+
+        # Padding
+        Op.NOP, Op.NOP, Op.NOP, Op.NOP, Op.NOP, Op.NOP, Op.NOP, Op.NOP,  # 0x07-0x0E
+        Op.NOP,             # 0x0F
+
+        # Function at 0x10
+        # After CALL: SP = 0xFD (return address at 0xFD)
+        # Parameter at 0xFE, accessible as FP + offset
+        Op.PUSH_FP,         # 0x10: Save FP, SP = 0xFC
+        Op.TSF,             # 0x11: FP = SP = 0xFC
+        # Frame layout:
+        # 0xFF: (unused)
+        # 0xFE: Parameter (0x55)
+        # 0xFD: Return address
+        # 0xFC: Old FP (FP points here)
+        # Access parameter at FP + 2 = 0xFE
+        Op.LDA_FP, 0x02,    # 0x12: AC = MEM[0xFC + 0x02] = MEM[0xFE] = 0x55
+        Op.OUT, 0x00,       # 0x14: Output parameter
+        Op.TFS,             # 0x16: Restore SP
+        Op.POP_FP,          # 0x17: Restore FP
+        Op.RET,             # 0x18: Return
+    ]
+
+    await tb.load_program(program)
+    await tb.reset()
+
+    expected = 0x55  # Parameter value
+    result = await tb.wait_for_io_write(max_cycles=1000)
+
+    dut._log.info(f"FP parameter access test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"FP parameter access failed"
     dut._log.info("Test PASSED!")

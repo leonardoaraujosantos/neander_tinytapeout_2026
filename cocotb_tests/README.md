@@ -26,7 +26,7 @@ make SIM=verilator
 
 ## Testes Incluidos
 
-O arquivo de testes contém **114 testes automatizados** cobrindo todas as instruções do NEANDER-X.
+O arquivo de testes contém **123 testes automatizados** cobrindo todas as instruções do NEANDER-X.
 
 ### Testes Básicos
 
@@ -110,6 +110,20 @@ O arquivo de testes contém **114 testes automatizados** cobrindo todas as instr
 | `test_ja_not_taken_below` | JA não salta quando AC < valor unsigned |
 | `test_ja_not_taken_equal` | JA não salta quando AC == valor |
 
+### Testes Frame Pointer Extension
+
+| Teste | Descrição |
+|-------|-----------|
+| `test_tsf_basic` | TSF: FP = SP |
+| `test_tfs_basic` | TFS: SP = FP |
+| `test_push_fp_basic` | PUSH_FP: MEM[--SP] = FP |
+| `test_pop_fp_basic` | POP_FP: FP = MEM[SP++] |
+| `test_lda_fp_indexed` | LDA addr,FP: AC = MEM[addr + FP] |
+| `test_sta_fp_indexed` | STA addr,FP: MEM[addr + FP] = AC |
+| `test_function_prologue_epilogue` | Testa padrão PUSH_FP/TSF e TFS/POP_FP |
+| `test_fp_local_variable_access` | Acesso a variáveis locais via FP |
+| `test_fp_parameter_access` | Acesso a parâmetros via FP |
+
 ## Instruction Set Reference
 
 ### Instruções Básicas (Neander Original)
@@ -187,6 +201,17 @@ O arquivo de testes contém **114 testes automatizados** cobrindo todas as instr
 | 0x22 | LDA addr,Y | AC = MEM[addr + Y] |
 | 0x12 | STA addr,Y | MEM[addr + Y] = AC |
 
+### Frame Pointer Extension
+
+| Opcode | Mnemonic | Operação |
+|--------|----------|----------|
+| 0x0A | TSF | FP = SP |
+| 0x0B | TFS | SP = FP |
+| 0x0C | PUSH_FP | MEM[--SP] = FP |
+| 0x0D | POP_FP | FP = MEM[SP++] |
+| 0x24 | LDA addr,FP | AC = MEM[addr + FP] |
+| 0x14 | STA addr,FP | MEM[addr + FP] = AC |
+
 ### Multiplication Instruction
 
 | Opcode | Mnemonic | Operação |
@@ -246,7 +271,7 @@ Com a instrução MUL, o mesmo programa pode ser simplificado:
 cocotb_tests/
 ├── Makefile              # Makefile para cocotb
 ├── neander_tb_wrapper.sv # Wrapper com RAM e interface de carga
-├── test_neander.py       # Testes Python (99 testes)
+├── test_neander.py       # Testes Python (123 testes)
 └── README.md             # Este arquivo
 ```
 
@@ -258,6 +283,7 @@ O arquivo `src/top_cpu_neander_x.sv` é a implementação principal da CPU Neand
 - LCC compiler extension (NEG, CMP, SUB, INC, DEC, XOR, SHL, SHR, JC, JNC)
 - X register extension (LDX, STX, LDXI, TAX, TXA, INX, indexed addressing)
 - Y register extension (LDY, STY, LDYI, TAY, TYA, INY, indexed addressing)
+- Frame pointer extension (TSF, TFS, PUSH_FP, POP_FP, FP-indexed addressing)
 - Hardware multiplication (MUL: AC * X -> Y:AC)
 - Carry flag (C) for arithmetic overflow detection
 - Interface externa para RAM

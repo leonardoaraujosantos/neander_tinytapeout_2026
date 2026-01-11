@@ -1,5 +1,5 @@
 // ============================================================================
-// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (LCC + X/Y Register + Carry Flag)
+// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (LCC + X/Y/FP Register + Carry Flag)
 // ============================================================================
 
 module cpu_top (
@@ -25,7 +25,8 @@ module cpu_top (
     output logic [7:0] dbg_ri,
     output logic [7:0] dbg_sp,
     output logic [7:0] dbg_x,     // X register debug output
-    output logic [7:0] dbg_y      // Y register debug output
+    output logic [7:0] dbg_y,     // Y register debug output
+    output logic [7:0] dbg_fp     // FP register debug output
 );
 
     logic       pc_inc, pc_load;
@@ -52,6 +53,11 @@ module cpu_top (
     logic       y_to_ac;         // Transfer Y to AC (TYA)
     logic       indexed_mode_y;  // Use indexed addressing (addr + Y)
     logic       mul_to_y;        // Load Y with MUL high byte
+    // Frame Pointer Extension signals
+    logic       fp_load;         // Load FP register
+    logic       sp_load;         // Load SP from FP (for TFS)
+    logic       indexed_mode_fp; // Use indexed addressing (addr + FP)
+    logic [2:0] mem_data_sel_ext; // Extended: 000=AC, 001=PC, 010=X, 011=Y, 100=FP
 
     neander_datapath dp (
         .clk(clk),
@@ -84,6 +90,11 @@ module cpu_top (
         .y_to_ac(y_to_ac),
         .indexed_mode_y(indexed_mode_y),
         .mul_to_y(mul_to_y),
+        // Frame Pointer Extension signals
+        .fp_load(fp_load),
+        .sp_load(sp_load),
+        .indexed_mode_fp(indexed_mode_fp),
+        .mem_data_sel_ext(mem_data_sel_ext),
         .io_write_ctrl(io_write_ctrl),
         // Data/Status I/O
         .mem_data_in(mem_data_in),
@@ -103,7 +114,8 @@ module cpu_top (
         .dbg_ri(dbg_ri),
         .dbg_sp(dbg_sp),
         .dbg_x(dbg_x),
-        .dbg_y(dbg_y)
+        .dbg_y(dbg_y),
+        .dbg_fp(dbg_fp)
     );
 
     neander_control uc (
@@ -141,7 +153,12 @@ module cpu_top (
         .y_inc(y_inc),
         .y_to_ac(y_to_ac),
         .indexed_mode_y(indexed_mode_y),
-        .mul_to_y(mul_to_y)
+        .mul_to_y(mul_to_y),
+        // Frame Pointer Extension signals
+        .fp_load(fp_load),
+        .sp_load(sp_load),
+        .indexed_mode_fp(indexed_mode_fp),
+        .mem_data_sel_ext(mem_data_sel_ext)
     );
 
 endmodule

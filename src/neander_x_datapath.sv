@@ -1,5 +1,5 @@
 // ============================================================================
-// neander_x_datapath.sv — Datapath for NEANDER-X CPU (LCC + X/Y Register Extension)
+// neander_x_datapath.sv — Datapath for NEANDER-X CPU (LCC + X/Y/FP Register Extension)
 // ============================================================================
 // X Register Extension adds:
 //   - X index register for indexed addressing
@@ -10,6 +10,11 @@
 //   - Y index register for indexed addressing
 //   - LDY, STY, LDYI, TAY, TYA, INY instructions
 //   - Indexed addressing modes: LDA addr,Y and STA addr,Y
+//
+// Frame Pointer Extension adds:
+//   - FP register for stack frame management
+//   - TSF, TFS, PUSH_FP, POP_FP instructions
+//   - Indexed addressing modes: LDA addr,FP and STA addr,FP
 // ============================================================================
 
 // ---------------------------------------------------------------------------
@@ -152,6 +157,25 @@ module y_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
+// FP Frame Pointer Register (Load only)
+// Used for stack frame management in function calls
+// ---------------------------------------------------------------------------
+module fp_reg (
+    input  logic       clk,
+    input  logic       reset,
+    input  logic       fp_load,
+    input  logic [7:0] data_in,
+    output logic [7:0] fp_value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            fp_value <= 8'h00;
+        else if (fp_load)
+            fp_value <= data_in;
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
 // MUX PC/RDM/SP -> REM (3-way address mux)
 // ---------------------------------------------------------------------------
 module mux_addr (
@@ -206,6 +230,11 @@ module neander_datapath (
     input  logic       y_to_ac,   // Transfer Y to AC (TYA)
     input  logic       indexed_mode_y, // Use indexed addressing (addr + Y)
     input  logic       mul_to_y,  // Load Y with high byte of multiplication result
+    // Frame Pointer Extension signals
+    input  logic       fp_load,   // Load FP register
+    input  logic       sp_load,   // Load SP from FP (for TFS)
+    input  logic       indexed_mode_fp, // Use indexed addressing (addr + FP)
+    input  logic [2:0] mem_data_sel_ext, // Extended: 000=AC, 001=PC, 010=X, 011=Y, 100=FP
 
     // External RAM Interface
     input  logic [7:0] mem_data_in,
@@ -230,11 +259,12 @@ module neander_datapath (
     output logic [7:0] dbg_ri,
     output logic [7:0] dbg_sp,
     output logic [7:0] dbg_x,     // X register debug output
-    output logic [7:0] dbg_y      // Y register debug output
+    output logic [7:0] dbg_y,     // Y register debug output
+    output logic [7:0] dbg_fp     // FP register debug output
 );
 
     // Internal Signals (using 'logic' for everything)
-    logic [7:0] pc, rem, rdm, ri, ac, sp, x, y;  // Added X and Y registers
+    logic [7:0] pc, rem, rdm, ri, ac, sp, x, y, fp;  // Added X, Y, and FP registers
     logic [7:0] alu_res;
     logic [7:0] alu_mul_high;  // High byte of multiplication result from ALU
     logic       alu_carry;  // Carry output from ALU
@@ -242,25 +272,30 @@ module neander_datapath (
     logic [7:0] addr_mux;
     logic [7:0] addr_indexed;  // Address + X for indexed modes
     logic [7:0] addr_indexed_y; // Address + Y for indexed modes
+    logic [7:0] addr_indexed_fp; // Address + FP for indexed modes
+    logic [7:0] fp_in;    // FP register input (from SP for TSF, or from memory for POP_FP)
     logic [7:0] ac_in;
     logic [7:0] x_in;     // X register input (from AC for TAX, or from memory for LDX)
     logic [7:0] y_in;     // Y register input (from AC for TAY, or from memory for LDY)
     logic       N_in, Z_in, C_in;
 
-    // Indexed address calculation: addr + X or addr + Y
+    // Indexed address calculation: addr + X or addr + Y or addr + FP
     assign addr_indexed = rdm + x;
     assign addr_indexed_y = rdm + y;
+    assign addr_indexed_fp = rdm + fp;
 
     // Direct assignments
-    // Memory address: use indexed address when indexed_mode or indexed_mode_y is set
-    assign mem_addr = indexed_mode_y ? (rem + y) : (indexed_mode ? (rem + x) : rem);
-    // Memory data output MUX: 00=AC (STA/PUSH), 01=PC (CALL), 10=X (STX), 11=Y (STY)
+    // Memory address: use indexed address when indexed_mode, indexed_mode_y, or indexed_mode_fp is set
+    assign mem_addr = indexed_mode_fp ? (rem + fp) : (indexed_mode_y ? (rem + y) : (indexed_mode ? (rem + x) : rem));
+    // Memory data output MUX (extended): 000=AC, 001=PC, 010=X, 011=Y, 100=FP
     always_comb begin
-        case (mem_data_sel)
-            2'b00:   mem_data_out = ac;   // STA, PUSH
-            2'b01:   mem_data_out = pc;   // CALL (return address)
-            2'b10:   mem_data_out = x;    // STX
-            2'b11:   mem_data_out = y;    // STY
+        case (mem_data_sel_ext)
+            3'b000:  mem_data_out = ac;   // STA, PUSH
+            3'b001:  mem_data_out = pc;   // CALL (return address)
+            3'b010:  mem_data_out = x;    // STX
+            3'b011:  mem_data_out = y;    // STY
+            3'b100:  mem_data_out = fp;   // PUSH_FP
+            default: mem_data_out = ac;
         endcase
     end
     assign io_out       = ac;
@@ -275,6 +310,7 @@ module neander_datapath (
     assign dbg_sp = sp;
     assign dbg_x  = x;  // X register debug output
     assign dbg_y  = y;  // Y register debug output
+    assign dbg_fp = fp; // FP register debug output
 
     // --- Instantiations ---
 
@@ -286,8 +322,8 @@ module neander_datapath (
 
     sp_reg u_sp (
         .clk(clk), .reset(reset),
-        .sp_inc(sp_inc), .sp_dec(sp_dec), .sp_load(1'b0),
-        .data_in(8'h00), .sp_value(sp)
+        .sp_inc(sp_inc), .sp_dec(sp_dec), .sp_load(sp_load),
+        .data_in(fp), .sp_value(sp)  // sp_load used for TFS: SP ← FP
     );
 
     // X Index Register
@@ -318,6 +354,19 @@ module neander_datapath (
     // Otherwise (LDY/LDYI), input comes from memory/immediate
     assign y_in = mul_to_y ? alu_mul_high :
                   (opcode == 4'h0 && sub_opcode == 4'h3) ? ac : mem_data_in;
+
+    // FP Frame Pointer Register
+    // Input can be from SP (TSF) or from memory (POP_FP)
+    fp_reg u_fp (
+        .clk(clk), .reset(reset),
+        .fp_load(fp_load),
+        .data_in(fp_in), .fp_value(fp)
+    );
+
+    // FP register input mux: select between SP (TSF) and mem_data_in (POP_FP)
+    // When opcode is 0x0 and sub_opcode is 0xA (TSF), input comes from SP
+    // When opcode is 0x0 and sub_opcode is 0xD (POP_FP), input comes from memory
+    assign fp_in = (opcode == 4'h0 && sub_opcode == 4'hA) ? sp : mem_data_in;
 
     mux_addr u_mux (
         .sel(addr_sel), .pc(pc), .rdm(rdm), .sp(sp), .out(addr_mux)

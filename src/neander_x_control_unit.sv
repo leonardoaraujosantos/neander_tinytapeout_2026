@@ -1,5 +1,5 @@
 // ============================================================================
-// neander_x_control_unit.sv — Control Unit for NEANDER-X CPU (LCC + X/Y Register + Carry Flag)
+// neander_x_control_unit.sv — Control Unit for NEANDER-X CPU (LCC + X/Y/FP Register + Carry Flag)
 // ============================================================================
 // LCC Compiler Extension Instructions:
 //
@@ -16,6 +16,14 @@
 //   0x07: LDY addr  - Y = MEM[addr]
 //   0x08: STY addr  - MEM[addr] = Y
 //   0x09: MUL       - AC * X -> Y:AC (16-bit result, high byte in Y, low byte in AC)
+//   0x0A: TSF       - FP = SP (transfer SP to FP)
+//   0x0B: TFS       - SP = FP (transfer FP to SP)
+//   0x0C: PUSH_FP   - MEM[--SP] = FP (push frame pointer)
+//   0x0D: POP_FP    - FP = MEM[SP++] (pop frame pointer)
+//
+// Indexed Addressing with FP (sub_opcode bit 2):
+//   0x24: LDA addr,FP - AC = MEM[addr + FP]
+//   0x14: STA addr,FP - MEM[addr + FP] = AC
 //
 // LCC Extension using opcode 0x7 sub-opcodes:
 //   0x74: SUB addr  - AC = AC - MEM[addr]
@@ -92,7 +100,12 @@ module neander_control (
     output logic       y_inc,       // Increment Y register
     output logic       y_to_ac,     // Transfer Y to AC (TYA)
     output logic       indexed_mode_y, // Use indexed addressing (addr + Y)
-    output logic       mul_to_y     // Load Y with MUL high byte
+    output logic       mul_to_y,    // Load Y with MUL high byte
+    // Frame Pointer Extension signals
+    output logic       fp_load,     // Load FP register
+    output logic       sp_load,     // Load SP from FP (for TFS)
+    output logic       indexed_mode_fp, // Use indexed addressing (addr + FP)
+    output logic [2:0] mem_data_sel_ext // Extended: 000=AC, 001=PC, 010=X, 011=Y, 100=FP
 );
 
     // Using ENUM for states (Easier to debug in Waveforms)
@@ -156,6 +169,14 @@ module neander_control (
         S_STA_Y_1, S_STA_Y_2, S_STA_Y_3, S_STA_Y_4,  // STA addr,Y (0x12)
         // Multiplication
         S_MUL,                                        // MUL (0x09) - AC * X -> Y:AC
+        // Frame Pointer Extension states
+        S_TSF,                                        // TSF (0x0A) - FP = SP
+        S_TFS,                                        // TFS (0x0B) - SP = FP
+        S_PUSH_FP_1, S_PUSH_FP_2, S_PUSH_FP_3,       // PUSH_FP (0x0C)
+        S_POP_FP_1,  S_POP_FP_2,  S_POP_FP_3,        // POP_FP (0x0D)
+        // Indexed addressing states (FP)
+        S_LDA_FP_1, S_LDA_FP_2, S_LDA_FP_3, S_LDA_FP_4, // LDA addr,FP (0x24)
+        S_STA_FP_1, S_STA_FP_2, S_STA_FP_3, S_STA_FP_4, // STA addr,FP (0x14)
         S_HLT
     } state_t;
 
@@ -200,6 +221,11 @@ module neander_control (
         y_to_ac      = '0;
         indexed_mode_y = '0;
         mul_to_y     = '0;
+        // Frame Pointer Extension defaults
+        fp_load      = '0;
+        sp_load      = '0;
+        indexed_mode_fp = '0;
+        mem_data_sel_ext = 3'b000;  // Default to AC (matches mem_data_sel = 00)
 
         next_state  = state;
 
@@ -225,7 +251,7 @@ module neander_control (
             // --- DECODE ---
             S_DECODE: begin
                 case (opcode)
-                    4'h0: begin  // NOP family + LCC extensions (NEG, CMP) + Y register ops + MUL
+                    4'h0: begin  // NOP family + LCC extensions (NEG, CMP) + Y register ops + MUL + FP ops
                         case (sub_opcode)
                             4'h0: next_state = S_FETCH_1;  // NOP (0x00)
                             4'h1: next_state = S_NEG;      // NEG (0x01)
@@ -237,12 +263,18 @@ module neander_control (
                             4'h7: next_state = S_LDY_1;    // LDY addr (0x07)
                             4'h8: next_state = S_STY_1;    // STY addr (0x08)
                             4'h9: next_state = S_MUL;      // MUL (0x09) - AC * X -> Y:AC
+                            4'hA: next_state = S_TSF;      // TSF (0x0A) - FP = SP
+                            4'hB: next_state = S_TFS;      // TFS (0x0B) - SP = FP
+                            4'hC: next_state = S_PUSH_FP_1; // PUSH_FP (0x0C)
+                            4'hD: next_state = S_POP_FP_1;  // POP_FP (0x0D)
                             default: next_state = S_FETCH_1;
                         endcase
                     end
                     4'h2: begin
                         // LDA: check sub_opcode for indexed mode
-                        if (sub_opcode[1])
+                        if (sub_opcode[2])
+                            next_state = S_LDA_FP_1; // LDA addr,FP (0x24)
+                        else if (sub_opcode[1])
                             next_state = S_LDA_Y_1;  // LDA addr,Y (0x22)
                         else if (sub_opcode[0])
                             next_state = S_LDA_X_1;  // LDA addr,X (0x21)
@@ -251,7 +283,9 @@ module neander_control (
                     end
                     4'h1: begin
                         // STA: check sub_opcode for indexed mode
-                        if (sub_opcode[1])
+                        if (sub_opcode[2])
+                            next_state = S_STA_FP_1; // STA addr,FP (0x14)
+                        else if (sub_opcode[1])
                             next_state = S_STA_Y_1;  // STA addr,Y (0x12)
                         else if (sub_opcode[0])
                             next_state = S_STA_X_1;  // STA addr,X (0x11)
@@ -568,7 +602,7 @@ module neander_control (
             end
             S_CALL_5: begin
                 mem_write = 1;     // Write return address (PC) to [SP]
-                mem_data_sel = 1;  // Select PC as data source
+                mem_data_sel_ext = 3'b001;  // Select PC as data source
                 pc_load = 1;       // Load target address from RDM to PC
                 next_state = S_FETCH_1;
             end
@@ -697,7 +731,7 @@ module neander_control (
             end
             S_STX_4: begin
                 mem_write = 1;
-                mem_data_sel = 2'b10;  // Select X as data source
+                mem_data_sel_ext = 3'b010;  // Select X as data source
                 next_state = S_FETCH_1;
             end
 
@@ -951,7 +985,7 @@ module neander_control (
             end
             S_STY_4: begin
                 mem_write = 1;
-                mem_data_sel = 2'b11;  // Select Y as data source
+                mem_data_sel_ext = 3'b011;  // Select Y as data source
                 next_state = S_FETCH_1;
             end
 
@@ -1046,6 +1080,99 @@ module neander_control (
                 mul_to_y = 1;       // Signal datapath to use mul_high for Y input
                 nz_load = 1;        // Update N and Z based on low byte (AC)
                 c_load = 1;         // Set carry if overflow (high byte != 0)
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // FRAME POINTER EXTENSION INSTRUCTIONS
+            // ================================================================
+
+            // --- TSF (0x0A) ---
+            // Transfer SP to FP: FP = SP (single cycle)
+            S_TSF: begin
+                fp_load = 1;       // Load FP from SP (datapath handles mux)
+                next_state = S_FETCH_1;
+            end
+
+            // --- TFS (0x0B) ---
+            // Transfer FP to SP: SP = FP (single cycle)
+            S_TFS: begin
+                sp_load = 1;       // Load SP from FP
+                next_state = S_FETCH_1;
+            end
+
+            // --- PUSH_FP (0x0C) ---
+            // Push FP onto stack: MEM[--SP] = FP
+            S_PUSH_FP_1: begin
+                sp_dec = 1;        // Decrement SP first
+                next_state = S_PUSH_FP_2;
+            end
+            S_PUSH_FP_2: begin
+                addr_sel = 2'b10;  // SP -> REM
+                rem_load = 1;
+                next_state = S_PUSH_FP_3;
+            end
+            S_PUSH_FP_3: begin
+                mem_write = 1;
+                mem_data_sel_ext = 3'b100;  // Select FP as data source
+                next_state = S_FETCH_1;
+            end
+
+            // --- POP_FP (0x0D) ---
+            // Pop from stack to FP: FP = MEM[SP++]
+            S_POP_FP_1: begin
+                addr_sel = 2'b10;  // SP -> REM
+                rem_load = 1;
+                next_state = S_POP_FP_2;
+            end
+            S_POP_FP_2: begin
+                mem_read = 1;      // Read memory at [REM]
+                next_state = S_POP_FP_3;
+            end
+            S_POP_FP_3: begin
+                mem_read = 1;
+                fp_load = 1;       // Load FP from memory
+                sp_inc = 1;        // Increment SP (pop)
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // INDEXED ADDRESSING MODES (FP)
+            // ================================================================
+
+            // --- LDA addr,FP (0x24) ---
+            // Load AC from memory with FP-indexed addressing: AC = MEM[addr + FP]
+            S_LDA_FP_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDA_FP_2;
+            end
+            S_LDA_FP_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDA_FP_3;
+            end
+            S_LDA_FP_3: begin
+                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDA_FP_4;
+            end
+            S_LDA_FP_4: begin
+                mem_read = 1;
+                indexed_mode_fp = 1;  // Use addr + FP for memory access
+                ac_load = 1;
+                nz_load = 1;
+                next_state = S_FETCH_1;
+            end
+
+            // --- STA addr,FP (0x14) ---
+            // Store AC to memory with FP-indexed addressing: MEM[addr + FP] = AC
+            S_STA_FP_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STA_FP_2;
+            end
+            S_STA_FP_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STA_FP_3;
+            end
+            S_STA_FP_3: begin
+                addr_sel = 2'b00; rem_load = 1; next_state = S_STA_FP_4;
+            end
+            S_STA_FP_4: begin
+                indexed_mode_fp = 1;  // Use addr + FP for memory access
+                mem_write = 1;
                 next_state = S_FETCH_1;
             end
 
