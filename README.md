@@ -68,7 +68,7 @@ graph TB
         REM[REM<br/>Address Reg]
         RDM[RDM<br/>Data Reg]
         AC[AC<br/>Accumulator]
-        ALU[ALU<br/>+, &, |, ~]
+        ALU[ALU<br/>+ & OR NOT]
         NZ[N Z<br/>Flags]
         MUX[Address MUX<br/>PC/RDM/SP]
     end
