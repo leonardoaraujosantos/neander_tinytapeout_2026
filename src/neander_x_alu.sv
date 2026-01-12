@@ -9,15 +9,21 @@
 //   0100: XOR  - a ^ b
 //   0101: NOT  - ~a
 //   0110: SHL  - a << 1          (carry = MSB shifted out)
-//   0111: SHR  - a >> 1          (carry = LSB shifted out)
+//   0111: SHR  - a >> 1          (carry = LSB shifted out, logical)
 //   1000: NEG  - 0 - a = -a      (two's complement negation)
 //   1001: MUL  - a * b           (16-bit result: mul_high:result)
+//   1010: DIV  - a / b           (quotient in result, remainder in mul_high)
+//   1011: MOD  - a % b           (remainder in result, quotient in mul_high)
+//   1100: ADC  - a + b + carry   (add with carry for multi-byte arithmetic)
+//   1101: SBC  - a - b - carry   (subtract with borrow for multi-byte arithmetic)
+//   1110: ASR  - a >> 1 (arith)  (arithmetic shift right, preserves sign bit)
 // ============================================================================
 
 module neander_alu (
     input  logic [7:0] a,
     input  logic [7:0] b,
     input  logic [3:0] alu_op,  // Extended to 4 bits for NEG and future ops
+    input  logic       carry_in, // Carry input for ADC/SBC operations
     output logic [7:0] result,
     output logic [7:0] mul_high,  // High byte of multiplication result
     output logic       carry_out  // Carry/borrow flag output
@@ -73,6 +79,42 @@ module neander_alu (
                 result = mul_temp[7:0];    // Low byte to AC
                 mul_high = mul_temp[15:8]; // High byte to Y register
                 carry_out = (mul_temp[15:8] != 8'h00);  // Carry set if overflow (high byte non-zero)
+            end
+            4'b1010: begin  // DIV (a / b = quotient, a % b = remainder)
+                if (b != 8'h00) begin
+                    result = a / b;        // Quotient to AC
+                    mul_high = a % b;      // Remainder to Y (reusing mul_high output)
+                    carry_out = 1'b0;      // No error
+                end else begin
+                    result = 8'hFF;        // Division by zero: return max value
+                    mul_high = a;          // Preserve dividend in remainder
+                    carry_out = 1'b1;      // Set carry to indicate division by zero error
+                end
+            end
+            4'b1011: begin  // MOD (a % b = remainder, a / b = quotient)
+                if (b != 8'h00) begin
+                    result = a % b;        // Remainder to AC
+                    mul_high = a / b;      // Quotient to Y (reusing mul_high output)
+                    carry_out = 1'b0;      // No error
+                end else begin
+                    result = a;            // Division by zero: return dividend
+                    mul_high = 8'hFF;      // Max value in quotient
+                    carry_out = 1'b1;      // Set carry to indicate division by zero error
+                end
+            end
+            4'b1100: begin  // ADC (a + b + carry_in) - Add with Carry
+                temp = {1'b0, a} + {1'b0, b} + {8'b0, carry_in};
+                result = temp[7:0];
+                carry_out = temp[8];
+            end
+            4'b1101: begin  // SBC (a - b - carry_in) - Subtract with Borrow
+                temp = {1'b0, a} - {1'b0, b} - {8'b0, carry_in};
+                result = temp[7:0];
+                carry_out = temp[8];  // Borrow flag (1 if underflow)
+            end
+            4'b1110: begin  // ASR (arithmetic shift right) - preserves sign bit
+                carry_out = a[0];          // LSB shifted out to carry
+                result = {a[7], a[7:1]};   // Shift right, keeping sign bit
             end
             default: begin
                 result = 8'h00;

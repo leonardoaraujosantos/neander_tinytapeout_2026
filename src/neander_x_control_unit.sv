@@ -16,6 +16,8 @@
 //   0x07: LDY addr  - Y = MEM[addr]
 //   0x08: STY addr  - MEM[addr] = Y
 //   0x09: MUL       - AC * X -> Y:AC (16-bit result, high byte in Y, low byte in AC)
+//   0x0E: DIV       - AC / X -> AC (quotient), Y (remainder)
+//   0x0F: MOD       - AC % X -> AC (remainder), Y (quotient)
 //   0x0A: TSF       - FP = SP (transfer SP to FP)
 //   0x0B: TFS       - SP = FP (transfer FP to SP)
 //   0x0C: PUSH_FP   - MEM[--SP] = FP (push frame pointer)
@@ -62,6 +64,11 @@
 // Unsigned Comparison Jumps (after CMP instruction):
 //   0x86: JBE addr  - Jump if Below or Equal (C=1 OR Z=1)
 //   0x87: JA addr   - Jump if Above (C=0 AND Z=0)
+//
+// Multi-byte Arithmetic Extension (for 16-bit and 32-bit operations):
+//   0x31: ADC addr  - AC = AC + MEM[addr] + Carry (Add with Carry)
+//   0x51: SBC addr  - AC = AC - MEM[addr] - Carry (Subtract with Borrow)
+//   0x61: ASR       - AC = AC >> 1 (Arithmetic Shift Right, preserves sign)
 // ============================================================================
 
 module neander_control (
@@ -167,8 +174,14 @@ module neander_control (
         // Indexed addressing states (Y)
         S_LDA_Y_1, S_LDA_Y_2, S_LDA_Y_3, S_LDA_Y_4,  // LDA addr,Y (0x22)
         S_STA_Y_1, S_STA_Y_2, S_STA_Y_3, S_STA_Y_4,  // STA addr,Y (0x12)
-        // Multiplication
+        // Multiplication and Division
         S_MUL,                                        // MUL (0x09) - AC * X -> Y:AC
+        S_DIV,                                        // DIV (0x0E) - AC / X -> AC (quotient), Y (remainder)
+        S_MOD,                                        // MOD (0x0F) - AC % X -> AC (remainder), Y (quotient)
+        // Multi-byte arithmetic (ADC, SBC) and arithmetic shift
+        S_ADC_1, S_ADC_2, S_ADC_3, S_ADC_4,          // ADC addr (0x31) - Add with Carry
+        S_SBC_1, S_SBC_2, S_SBC_3, S_SBC_4,          // SBC addr (0x51) - Subtract with Borrow
+        S_ASR,                                        // ASR (0x61) - Arithmetic Shift Right
         // Frame Pointer Extension states
         S_TSF,                                        // TSF (0x0A) - FP = SP
         S_TFS,                                        // TFS (0x0B) - SP = FP
@@ -267,6 +280,8 @@ module neander_control (
                             4'hB: next_state = S_TFS;      // TFS (0x0B) - SP = FP
                             4'hC: next_state = S_PUSH_FP_1; // PUSH_FP (0x0C)
                             4'hD: next_state = S_POP_FP_1;  // POP_FP (0x0D)
+                            4'hE: next_state = S_DIV;      // DIV (0x0E) - AC / X -> AC, Y
+                            4'hF: next_state = S_MOD;      // MOD (0x0F) - AC % X -> AC, Y
                             default: next_state = S_FETCH_1;
                         endcase
                     end
@@ -292,10 +307,25 @@ module neander_control (
                         else
                             next_state = S_STA_1;    // STA addr (0x10)
                     end
-                    4'h3: next_state = S_ADD_1;
-                    4'h5: next_state = S_AND_1;
+                    4'h3: begin  // ADD family: 0x30=ADD, 0x31=ADC
+                        if (sub_opcode[0])
+                            next_state = S_ADC_1;  // ADC addr (0x31)
+                        else
+                            next_state = S_ADD_1;  // ADD addr (0x30)
+                    end
+                    4'h5: begin  // AND family: 0x50=AND, 0x51=SBC
+                        if (sub_opcode[0])
+                            next_state = S_SBC_1;  // SBC addr (0x51)
+                        else
+                            next_state = S_AND_1;  // AND addr (0x50)
+                    end
                     4'h4: next_state = S_OR_1;
-                    4'h6: next_state = S_NOT;
+                    4'h6: begin  // NOT family: 0x60=NOT, 0x61=ASR
+                        if (sub_opcode[0])
+                            next_state = S_ASR;    // ASR (0x61)
+                        else
+                            next_state = S_NOT;    // NOT (0x60)
+                    end
                     4'h7: begin  // Stack operations + LCC extension (sub-opcode in lower nibble)
                         case (sub_opcode)
                             4'h0: next_state = S_PUSH_1;  // PUSH (0x70)
@@ -1065,7 +1095,7 @@ module neander_control (
             end
 
             // ================================================================
-            // MULTIPLICATION INSTRUCTION
+            // MULTIPLICATION AND DIVISION INSTRUCTIONS
             // ================================================================
 
             // --- MUL (0x09) ---
@@ -1080,6 +1110,93 @@ module neander_control (
                 mul_to_y = 1;       // Signal datapath to use mul_high for Y input
                 nz_load = 1;        // Update N and Z based on low byte (AC)
                 c_load = 1;         // Set carry if overflow (high byte != 0)
+                next_state = S_FETCH_1;
+            end
+
+            // --- DIV (0x0E) ---
+            // Divide AC by X: AC / X -> AC (quotient), Y (remainder)
+            // Single cycle operation (combinational divider in ALU)
+            // Carry flag set on division by zero
+            S_DIV: begin
+                alu_op = 4'b1010;   // DIV operation
+                alu_b_sel = 2'b10;  // Select X register as ALU B input
+                ac_load = 1;        // Load quotient to AC
+                y_load = 1;         // Load remainder to Y
+                mul_to_y = 1;       // Signal datapath to use mul_high (remainder) for Y input
+                nz_load = 1;        // Update N and Z based on quotient (AC)
+                c_load = 1;         // Set carry if division by zero
+                next_state = S_FETCH_1;
+            end
+
+            // --- MOD (0x0F) ---
+            // Modulo AC by X: AC % X -> AC (remainder), Y (quotient)
+            // Single cycle operation (combinational divider in ALU)
+            // Carry flag set on division by zero
+            S_MOD: begin
+                alu_op = 4'b1011;   // MOD operation
+                alu_b_sel = 2'b10;  // Select X register as ALU B input
+                ac_load = 1;        // Load remainder to AC
+                y_load = 1;         // Load quotient to Y
+                mul_to_y = 1;       // Signal datapath to use mul_high (quotient) for Y input
+                nz_load = 1;        // Update N and Z based on remainder (AC)
+                c_load = 1;         // Set carry if division by zero
+                next_state = S_FETCH_1;
+            end
+
+            // ================================================================
+            // MULTI-BYTE ARITHMETIC INSTRUCTIONS (ADC, SBC, ASR)
+            // ================================================================
+
+            // --- ADC addr (0x31) ---
+            // Add with Carry: AC = AC + MEM[addr] + Carry
+            // Essential for multi-byte (16-bit, 32-bit) addition
+            S_ADC_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_ADC_2;
+            end
+            S_ADC_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_ADC_3;
+            end
+            S_ADC_3: begin
+                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_ADC_4;
+            end
+            S_ADC_4: begin
+                mem_read = 1;
+                ac_load = 1;
+                alu_op = 4'b1100;  // ADC operation
+                nz_load = 1;
+                c_load = 1;        // Update carry flag for chained operations
+                next_state = S_FETCH_1;
+            end
+
+            // --- SBC addr (0x51) ---
+            // Subtract with Borrow: AC = AC - MEM[addr] - Carry
+            // Essential for multi-byte (16-bit, 32-bit) subtraction
+            S_SBC_1: begin
+                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_SBC_2;
+            end
+            S_SBC_2: begin
+                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_SBC_3;
+            end
+            S_SBC_3: begin
+                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_SBC_4;
+            end
+            S_SBC_4: begin
+                mem_read = 1;
+                ac_load = 1;
+                alu_op = 4'b1101;  // SBC operation
+                nz_load = 1;
+                c_load = 1;        // Update carry/borrow flag for chained operations
+                next_state = S_FETCH_1;
+            end
+
+            // --- ASR (0x61) ---
+            // Arithmetic Shift Right: AC = AC >> 1 (preserves sign bit)
+            // Essential for signed division by 2 and sign extension
+            S_ASR: begin
+                ac_load = 1;
+                alu_op = 4'b1110;  // ASR operation
+                nz_load = 1;
+                c_load = 1;        // Carry gets the shifted-out bit
                 next_state = S_FETCH_1;
             end
 
