@@ -27,6 +27,9 @@ VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13g2/libs.ref/sg13g2_stdcell/verilog/sg13g2
 # this gets copied in by the GDS action workflow
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
 
+# SPI SRAM model is a testbench component, needed for both RTL and GL simulation
+VERILOG_SOURCES += $(SRC_DIR)/spi_sram_model.sv
+
 endif
 
 # Allow sharing configuration between design and testbench via `include`:

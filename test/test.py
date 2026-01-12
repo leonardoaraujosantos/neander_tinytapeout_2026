@@ -1042,3 +1042,2957 @@ async def test_neander_mod(dut):
 
     assert io_detected, "No IO write detected"
     dut._log.info("Test PASSED: MOD instruction works")
+
+
+# =============================================================================
+# NOP, IN, Flags, Edge Cases, Reset Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_nop_instruction(dut):
+    """Test NOP instruction - should do nothing and continue."""
+    dut._log.info("Test: LDI 0x10, NOP, NOP, NOP, OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x10,  # LDI 0x10
+        0x00, 0x00,  # NOP (should do nothing)
+        0x00, 0x00,  # NOP
+        0x00, 0x00,  # NOP
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: NOP instruction works")
+
+
+@cocotb.test()
+async def test_in_instruction(dut):
+    """Test IN instruction - read from input port."""
+    dut._log.info("Test: IN 0, OUT 0, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xC0, 0x00,  # IN 0 - read from port 0
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    # Set input value (ui_in[7:1] is input, ui_in[0] is SPI_MISO)
+    dut.ui_in.value = 0x54  # Input value (will be shifted)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: IN instruction works")
+
+
+@cocotb.test()
+async def test_flags_zero(dut):
+    """Test zero flag is set correctly."""
+    dut._log.info("Test: LDI 0, JZ target, then OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program that uses zero flag
+    tb.load_program([0xE0, 0x00, 0xA0, 0x10, 0xF0])  # LDI 0, JZ 0x10, HLT
+    tb.load_program([0xE0, 0x77, 0xD0, 0x00, 0xF0], start_addr=0x10)  # LDI 0x77, OUT, HLT
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "Z flag not set correctly"
+    dut._log.info("Test PASSED: Zero flag works")
+
+
+@cocotb.test()
+async def test_flags_negative(dut):
+    """Test negative flag is set correctly."""
+    dut._log.info("Test: LDI 0x80, JN target, then OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program that uses negative flag
+    tb.load_program([0xE0, 0x80, 0x90, 0x10, 0xF0])  # LDI 0x80, JN 0x10, HLT
+    tb.load_program([0xE0, 0x88, 0xD0, 0x00, 0xF0], start_addr=0x10)  # LDI 0x88, OUT, HLT
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "N flag not set correctly"
+    dut._log.info("Test PASSED: Negative flag works")
+
+
+@cocotb.test()
+async def test_edge_case_max_value(dut):
+    """Test edge case with max value 0xFF."""
+    dut._log.info("Test: LDI 0xFF, ADD [0x10], OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0xFF,  # LDI 0xFF
+        0x30, 0x10,  # ADD [0x10]
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x10, 0x01)  # 0xFF + 1 = 0x00 with carry
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: Max value edge case works")
+
+
+@cocotb.test()
+async def test_edge_case_boundary_0x80(dut):
+    """Test edge case at 0x80 boundary (sign bit)."""
+    dut._log.info("Test: LDI 0x7F, INC, OUT, HLT (0x7F+1=0x80)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x7F,  # LDI 0x7F (positive max)
+        0x75,        # INC - becomes 0x80 (negative)
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: 0x80 boundary edge case works")
+
+
+@cocotb.test()
+async def test_jmp_unconditional(dut):
+    """Test unconditional JMP instruction."""
+    dut._log.info("Test: JMP 0x10, skip, then LDI 0xAB, OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    tb.load_program([0x80, 0x10, 0xE0, 0xFF, 0xD0, 0x00, 0xF0])  # JMP 0x10, LDI 0xFF, OUT, HLT
+    tb.load_program([0xE0, 0xAB, 0xD0, 0x00, 0xF0], start_addr=0x10)  # LDI 0xAB, OUT, HLT
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JMP unconditional works")
+
+
+@cocotb.test()
+async def test_jn_instruction_no_jump(dut):
+    """Test JN when N flag is clear (should not jump)."""
+    dut._log.info("Test: LDI 0x7F (positive), JN 0x10, LDI 0xEE, OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x7F,  # LDI 0x7F (positive, N=0)
+        0x90, 0x10,  # JN 0x10 (should not jump)
+        0xE0, 0xEE,  # LDI 0xEE
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x42, 0xD0, 0x00, 0xF0], start_addr=0x10)  # Should be skipped
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JN (not taken) works")
+
+
+@cocotb.test()
+async def test_jnz_instruction_jump(dut):
+    """Test JNZ when Z flag is clear (should jump)."""
+    dut._log.info("Test: LDI 5, JNZ 0x10, then OUT")
+
+    tb = NeanderTB(dut)
+
+    tb.load_program([0xE0, 0x05, 0xB0, 0x10, 0xE0, 0xFF, 0xD0, 0x00, 0xF0])
+    tb.load_program([0xE0, 0xAA, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JNZ (taken) works")
+
+
+@cocotb.test()
+async def test_jnz_instruction_no_jump(dut):
+    """Test JNZ when Z flag is set (should not jump)."""
+    dut._log.info("Test: LDI 0, JNZ 0x10, LDI 0xBB, OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x00,  # LDI 0 (Z=1)
+        0xB0, 0x10,  # JNZ 0x10 (should not jump)
+        0xE0, 0xBB,  # LDI 0xBB
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JNZ (not taken) works")
+
+
+@cocotb.test()
+async def test_jz_instruction_jump(dut):
+    """Test JZ when Z flag is set (should jump)."""
+    dut._log.info("Test: LDI 0, JZ 0x10, then OUT")
+
+    tb = NeanderTB(dut)
+
+    tb.load_program([0xE0, 0x00, 0xA0, 0x10, 0xE0, 0xFF, 0xD0, 0x00, 0xF0])
+    tb.load_program([0xE0, 0xCC, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JZ (taken) works")
+
+
+@cocotb.test()
+async def test_jz_instruction_no_jump(dut):
+    """Test JZ when Z flag is clear (should not jump)."""
+    dut._log.info("Test: LDI 1, JZ 0x10, LDI 0xDD, OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 1 (Z=0)
+        0xA0, 0x10,  # JZ 0x10 (should not jump)
+        0xE0, 0xDD,  # LDI 0xDD
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JZ (not taken) works")
+
+
+# =============================================================================
+# Stack Operation Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_push_pop_single(dut):
+    """Test single PUSH and POP."""
+    dut._log.info("Test: LDI 0x55, PUSH, LDI 0, POP, OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x55,  # LDI 0x55
+        0x70,        # PUSH
+        0xE0, 0x00,  # LDI 0 (clear AC)
+        0x71,        # POP
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: PUSH/POP single works")
+
+
+@cocotb.test()
+async def test_push_pop_multiple(dut):
+    """Test multiple PUSH and POP operations."""
+    dut._log.info("Test: PUSH 0x11, PUSH 0x22, POP, OUT, HLT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x11,  # LDI 0x11
+        0x70,        # PUSH 0x11
+        0xE0, 0x22,  # LDI 0x22
+        0x70,        # PUSH 0x22
+        0x71,        # POP (should get 0x22)
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: PUSH/POP multiple works")
+
+
+@cocotb.test()
+async def test_push_pop_flags(dut):
+    """Test that POP sets flags correctly."""
+    dut._log.info("Test: PUSH 0x80 (negative), POP, JN, then OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x80,  # LDI 0x80 (negative)
+        0x70,        # PUSH 0x80
+        0xE0, 0x00,  # LDI 0 (clear N flag)
+        0x71,        # POP (should restore 0x80 and set N)
+        0x90, 0x10,  # JN 0x10 (should jump)
+        0xE0, 0xFF,  # LDI 0xFF (skip)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x99, 0xD0, 0x00, 0xF0], start_addr=0x10)  # Success
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: POP sets flags correctly")
+
+
+@cocotb.test()
+async def test_push_pop_zero_flag(dut):
+    """Test that POP sets zero flag."""
+    dut._log.info("Test: PUSH 0, LDI 1, POP, JZ, then OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x00,  # LDI 0
+        0x70,        # PUSH 0
+        0xE0, 0x01,  # LDI 1 (clear Z flag)
+        0x71,        # POP (should restore 0 and set Z)
+        0xA0, 0x10,  # JZ 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x88, 0xD0, 0x00, 0xF0], start_addr=0x10)  # Success
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: POP sets zero flag correctly")
+
+
+# =============================================================================
+# CALL/RET Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_call_ret_simple(dut):
+    """Test simple CALL and RET."""
+    dut._log.info("Test: CALL 0x10, OUT, HLT | Subroutine: LDI 0x66, RET")
+
+    tb = NeanderTB(dut)
+
+    # Main: CALL 0x10, OUT, HLT
+    tb.load_program([0x72, 0x10, 0xD0, 0x00, 0xF0])
+    # Subroutine at 0x10: LDI 0x66, RET
+    tb.load_program([0xE0, 0x66, 0x73], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CALL/RET simple works")
+
+
+@cocotb.test()
+async def test_call_ret_with_parameter(dut):
+    """Test CALL/RET with parameter in AC."""
+    dut._log.info("Test: LDI 5, CALL 0x10, OUT, HLT | Sub: INC, RET")
+
+    tb = NeanderTB(dut)
+
+    # Main: LDI 5, CALL 0x10, OUT, HLT
+    tb.load_program([0xE0, 0x05, 0x72, 0x10, 0xD0, 0x00, 0xF0])
+    # Subroutine at 0x10: INC, RET (returns 6)
+    tb.load_program([0x75, 0x73], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CALL/RET with parameter works")
+
+
+@cocotb.test()
+async def test_nested_calls(dut):
+    """Test nested subroutine calls."""
+    dut._log.info("Test: CALL A, OUT | A: LDI 1, CALL B, RET | B: INC, RET")
+
+    tb = NeanderTB(dut)
+
+    # Main at 0x00: CALL 0x10, OUT, HLT
+    tb.load_program([0x72, 0x10, 0xD0, 0x00, 0xF0])
+    # Sub A at 0x10: LDI 1, CALL 0x20, RET
+    tb.load_program([0xE0, 0x01, 0x72, 0x20, 0x73], start_addr=0x10)
+    # Sub B at 0x20: INC, RET
+    tb.load_program([0x75, 0x73], start_addr=0x20)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(6000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: Nested calls work")
+
+
+@cocotb.test()
+async def test_call_ret_preserves_stack(dut):
+    """Test that CALL/RET preserves stack correctly."""
+    dut._log.info("Test: PUSH 0xAA, CALL, POP, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Main: LDI 0xAA, PUSH, CALL 0x10, POP, OUT, HLT
+    program = [
+        0xE0, 0xAA,  # LDI 0xAA
+        0x70,        # PUSH
+        0x72, 0x10,  # CALL 0x10
+        0x71,        # POP (should get 0xAA)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    # Subroutine at 0x10: just return
+    tb.load_program([0x73], start_addr=0x10)  # RET
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CALL/RET preserves stack")
+
+
+@cocotb.test()
+async def test_multiple_calls_same_subroutine(dut):
+    """Test calling the same subroutine multiple times."""
+    dut._log.info("Test: LDI 0, CALL inc, CALL inc, CALL inc, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Main: LDI 0, CALL 0x20, CALL 0x20, CALL 0x20, OUT, HLT
+    program = [
+        0xE0, 0x00,  # LDI 0
+        0x72, 0x20,  # CALL 0x20
+        0x72, 0x20,  # CALL 0x20
+        0x72, 0x20,  # CALL 0x20
+        0xD0, 0x00,  # OUT (should be 3)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    # Subroutine at 0x20: INC, RET
+    tb.load_program([0x75, 0x73], start_addr=0x20)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(8000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: Multiple calls to same subroutine work")
+
+
+# =============================================================================
+# SUB, INC, DEC, XOR, SHL, SHR Detailed Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_sub_instruction_detailed(dut):
+    """Test SUB instruction basic."""
+    dut._log.info("Test: LDI 10, SUB [0x10], OUT (10-3=7)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x74, 0x10,  # SUB [0x10]
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x10, 0x03)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SUB instruction works")
+
+
+@cocotb.test()
+async def test_sub_underflow(dut):
+    """Test SUB underflow (0 - 1 = 0xFF with borrow)."""
+    dut._log.info("Test: LDI 0, SUB [0x10], OUT (0-1=0xFF)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x00,  # LDI 0
+        0x74, 0x10,  # SUB [0x10]
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x10, 0x01)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SUB underflow works")
+
+
+@cocotb.test()
+async def test_sub_sets_carry(dut):
+    """Test SUB sets carry flag on borrow."""
+    dut._log.info("Test: SUB with borrow, then JC")
+
+    tb = NeanderTB(dut)
+
+    # 5 - 10 = -5 (borrow), JC should jump
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x74, 0x80,  # SUB [0x80]
+        0x81, 0x10,  # JC 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x80, 10)
+    tb.load_program([0xE0, 0x77, 0xD0, 0x00, 0xF0], start_addr=0x10)  # Success
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SUB sets carry on borrow")
+
+
+@cocotb.test()
+async def test_inc_instruction_detailed(dut):
+    """Test INC instruction."""
+    dut._log.info("Test: LDI 10, INC, OUT (10+1=11)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x75,        # INC
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: INC instruction works")
+
+
+@cocotb.test()
+async def test_inc_overflow(dut):
+    """Test INC overflow (0xFF + 1 = 0x00)."""
+    dut._log.info("Test: LDI 0xFF, INC, OUT (0xFF+1=0)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0xFF,  # LDI 0xFF
+        0x75,        # INC
+        0xA0, 0x10,  # JZ 0x10 (should jump if result is 0)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0xAA, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: INC overflow works")
+
+
+@cocotb.test()
+async def test_dec_instruction_detailed(dut):
+    """Test DEC instruction."""
+    dut._log.info("Test: LDI 10, DEC, OUT (10-1=9)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x76,        # DEC
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: DEC instruction works")
+
+
+@cocotb.test()
+async def test_dec_underflow(dut):
+    """Test DEC underflow (0 - 1 = 0xFF)."""
+    dut._log.info("Test: LDI 0, DEC, OUT (0-1=0xFF)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x00,  # LDI 0
+        0x76,        # DEC
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: DEC underflow works")
+
+
+@cocotb.test()
+async def test_inc_dec_chain(dut):
+    """Test INC and DEC chain."""
+    dut._log.info("Test: LDI 5, INC, INC, INC, DEC, OUT (5+3-1=7)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x75,        # INC
+        0x75,        # INC
+        0x75,        # INC
+        0x76,        # DEC
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: INC/DEC chain works")
+
+
+@cocotb.test()
+async def test_xor_instruction_detailed(dut):
+    """Test XOR instruction."""
+    dut._log.info("Test: LDI 0xAA, XOR [0x10], OUT (0xAA ^ 0x55 = 0xFF)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0xAA,  # LDI 0xAA
+        0x77, 0x10,  # XOR [0x10]
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x10, 0x55)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: XOR instruction works")
+
+
+@cocotb.test()
+async def test_xor_self_zero(dut):
+    """Test XOR with self produces zero."""
+    dut._log.info("Test: LDI 0x42, STA, XOR self, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x42,  # LDI 0x42
+        0x10, 0x10,  # STA 0x10
+        0x77, 0x10,  # XOR [0x10] (0x42 ^ 0x42 = 0)
+        0xA0, 0x20,  # JZ 0x20 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x11, 0xD0, 0x00, 0xF0], start_addr=0x20)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: XOR self zero works")
+
+
+@cocotb.test()
+async def test_shl_instruction_detailed(dut):
+    """Test SHL instruction."""
+    dut._log.info("Test: LDI 0x0F, SHL, OUT (0x0F << 1 = 0x1E)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0F,  # LDI 0x0F
+        0x78,        # SHL
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SHL instruction works")
+
+
+@cocotb.test()
+async def test_shl_msb_loss(dut):
+    """Test SHL MSB is lost."""
+    dut._log.info("Test: LDI 0x80, SHL, OUT (0x80 << 1 = 0)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x80,  # LDI 0x80
+        0x78,        # SHL
+        0xA0, 0x10,  # JZ 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0xBB, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SHL MSB loss works")
+
+
+@cocotb.test()
+async def test_shr_instruction_detailed(dut):
+    """Test SHR instruction."""
+    dut._log.info("Test: LDI 0xF0, SHR, OUT (0xF0 >> 1 = 0x78)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0xF0,  # LDI 0xF0
+        0x79,        # SHR
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SHR instruction works")
+
+
+@cocotb.test()
+async def test_shr_lsb_loss(dut):
+    """Test SHR LSB is lost."""
+    dut._log.info("Test: LDI 0x01, SHR, OUT (0x01 >> 1 = 0)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 0x01
+        0x79,        # SHR
+        0xA0, 0x10,  # JZ 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0xCC, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SHR LSB loss works")
+
+
+@cocotb.test()
+async def test_multiply_by_2_using_shl(dut):
+    """Test multiply by 2 using SHL."""
+    dut._log.info("Test: LDI 25, SHL, OUT (25*2=50)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x19,  # LDI 25
+        0x78,        # SHL
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: Multiply by 2 using SHL works")
+
+
+@cocotb.test()
+async def test_divide_by_2_using_shr(dut):
+    """Test divide by 2 using SHR."""
+    dut._log.info("Test: LDI 50, SHR, OUT (50/2=25)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x32,  # LDI 50
+        0x79,        # SHR
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: Divide by 2 using SHR works")
+
+
+# =============================================================================
+# X Register Detailed Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_ldxi_instruction(dut):
+    """Test LDXI immediate load to X."""
+    dut._log.info("Test: LDXI 0x55, TXA, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x55,  # LDXI 0x55
+        0x7E,        # TXA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDXI instruction works")
+
+
+@cocotb.test()
+async def test_tax_instruction(dut):
+    """Test TAX (transfer AC to X)."""
+    dut._log.info("Test: LDI 0x77, TAX, LDI 0, TXA, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x77,  # LDI 0x77
+        0x7D,        # TAX
+        0xE0, 0x00,  # LDI 0
+        0x7E,        # TXA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TAX instruction works")
+
+
+@cocotb.test()
+async def test_txa_instruction(dut):
+    """Test TXA (transfer X to AC)."""
+    dut._log.info("Test: LDXI 0x33, TXA, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x33,  # LDXI 0x33
+        0x7E,        # TXA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TXA instruction works")
+
+
+@cocotb.test()
+async def test_inx_instruction(dut):
+    """Test INX (increment X)."""
+    dut._log.info("Test: LDXI 10, INX, TXA, OUT (11)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x0A,  # LDXI 10
+        0x7F,        # INX
+        0x7E,        # TXA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: INX instruction works")
+
+
+@cocotb.test()
+async def test_inx_overflow(dut):
+    """Test INX overflow (0xFF + 1 = 0)."""
+    dut._log.info("Test: LDXI 0xFF, INX, TXA, JZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0xFF,  # LDXI 0xFF
+        0x7F,        # INX
+        0x7E,        # TXA
+        0xA0, 0x10,  # JZ 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0xAA, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: INX overflow works")
+
+
+@cocotb.test()
+async def test_ldx_stx_instructions(dut):
+    """Test LDX and STX instructions."""
+    dut._log.info("Test: LDXI 0x42, STX, LDI 0, LDX, TXA, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x42,  # LDXI 0x42
+        0x7B, 0x80,  # STX 0x80
+        0x7C, 0x00,  # LDXI 0 (clear X)
+        0x7A, 0x80,  # LDX 0x80
+        0x7E,        # TXA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDX/STX instructions work")
+
+
+@cocotb.test()
+async def test_lda_indexed(dut):
+    """Test LDA indexed by X."""
+    dut._log.info("Test: LDXI 5, LDA,X [0x10], OUT (load from 0x15)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x05,  # LDXI 5
+        0x21, 0x10,  # LDA,X [0x10] (0x10 + 5 = 0x15)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x15, 0xAB)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDA indexed works")
+
+
+@cocotb.test()
+async def test_sta_indexed(dut):
+    """Test STA indexed by X."""
+    dut._log.info("Test: LDXI 3, LDI 0x99, STA,X [0x20], LDA [0x23], OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x03,  # LDXI 3
+        0xE0, 0x99,  # LDI 0x99
+        0x11, 0x20,  # STA,X [0x20] (0x20 + 3 = 0x23)
+        0xE0, 0x00,  # LDI 0
+        0x20, 0x23,  # LDA [0x23]
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: STA indexed works")
+
+
+@cocotb.test()
+async def test_x_register_loop(dut):
+    """Test X register in a loop."""
+    dut._log.info("Test: Use X as loop counter")
+
+    tb = NeanderTB(dut)
+
+    # Count from 0 to 3 using X, increment AC each iteration
+    program = [
+        0xE0, 0x00,  # 0x00: LDI 0 (AC = counter result)
+        0x7C, 0x00,  # 0x02: LDXI 0 (X = loop counter)
+        # Loop start at 0x04
+        0x75,        # 0x04: INC (AC++)
+        0x7F,        # 0x05: INX (X++)
+        0x7E,        # 0x06: TXA (check X)
+        0x10, 0x80,  # 0x07: STA 0x80 (save X)
+        0xE0, 0x03,  # 0x09: LDI 3
+        0x02, 0x80,  # 0x0B: CMP [0x80] (compare 3 with X)
+        0xB0, 0x04,  # 0x0D: JNZ 0x04 (loop if not equal)
+        0x20, 0x80,  # 0x0F: LDA [0x80] (get final X value)
+        0xD0, 0x00,  # 0x11: OUT
+        0xF0,        # 0x13: HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(20000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: X register loop works")
+
+
+@cocotb.test()
+async def test_txa_flags(dut):
+    """Test TXA sets flags correctly."""
+    dut._log.info("Test: LDXI 0, TXA, JZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x00,  # LDXI 0
+        0xE0, 0xFF,  # LDI 0xFF (clear Z flag)
+        0x7E,        # TXA (should set Z)
+        0xA0, 0x10,  # JZ 0x10
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x11, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TXA sets flags correctly")
+
+
+@cocotb.test()
+async def test_txa_negative_flag(dut):
+    """Test TXA sets negative flag."""
+    dut._log.info("Test: LDXI 0x80, TXA, JN")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x7C, 0x80,  # LDXI 0x80
+        0xE0, 0x00,  # LDI 0 (clear N flag)
+        0x7E,        # TXA (should set N)
+        0x90, 0x10,  # JN 0x10
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x22, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TXA sets negative flag correctly")
+
+
+# =============================================================================
+# NEG Detailed Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_neg_positive(dut):
+    """Test NEG on positive number."""
+    dut._log.info("Test: LDI 5, NEG, OUT (-5 = 0xFB)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x01,        # NEG
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: NEG positive works")
+
+
+@cocotb.test()
+async def test_neg_negative(dut):
+    """Test NEG on negative number."""
+    dut._log.info("Test: LDI 0xFB, NEG, OUT (5)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0xFB,  # LDI 0xFB (-5)
+        0x01,        # NEG
+        0xD0, 0x00,  # OUT (should be 5)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: NEG negative works")
+
+
+@cocotb.test()
+async def test_neg_zero(dut):
+    """Test NEG on zero."""
+    dut._log.info("Test: LDI 0, NEG, JZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x00,  # LDI 0
+        0x01,        # NEG (0 = -0)
+        0xA0, 0x10,  # JZ 0x10
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x33, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: NEG zero works")
+
+
+@cocotb.test()
+async def test_neg_sets_n_flag(dut):
+    """Test NEG sets negative flag."""
+    dut._log.info("Test: LDI 1, NEG, JN")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 1
+        0x01,        # NEG (-1 = 0xFF, N=1)
+        0x90, 0x10,  # JN 0x10
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x44, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: NEG sets N flag")
+
+
+@cocotb.test()
+async def test_neg_sets_z_flag(dut):
+    """Test NEG sets zero flag on zero input."""
+    dut._log.info("Test: LDI 0, NEG, JZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 1 (clear Z)
+        0xE0, 0x00,  # LDI 0
+        0x01,        # NEG (0 -> 0, Z=1)
+        0xA0, 0x10,  # JZ 0x10
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x55, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: NEG sets Z flag")
+
+
+# =============================================================================
+# CMP Detailed Tests and Carry Jump Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_cmp_equal(dut):
+    """Test CMP when values are equal (Z=1)."""
+    dut._log.info("Test: LDI 10, CMP [0x80], JZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x10, 0x80,  # STA 0x80
+        0x02, 0x80,  # CMP [0x80] (10 - 10 = 0, Z=1)
+        0xA0, 0x10,  # JZ 0x10
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x66, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CMP equal works")
+
+
+@cocotb.test()
+async def test_cmp_not_equal(dut):
+    """Test CMP when values are not equal (Z=0)."""
+    dut._log.info("Test: LDI 10, CMP [0x80], JNZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x0A,  # LDI 10
+        0x02, 0x80,  # CMP [0x80] (10 - 5 = 5, Z=0)
+        0xB0, 0x14,  # JNZ 0x14
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x77, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CMP not equal works")
+
+
+@cocotb.test()
+async def test_cmp_preserves_ac(dut):
+    """Test CMP does not modify AC."""
+    dut._log.info("Test: LDI 42, CMP [0x80], OUT (should be 42)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x2A,  # LDI 42
+        0x02, 0x80,  # CMP [0x80]
+        0xD0, 0x00,  # OUT (should be 42, not 37)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(4000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CMP preserves AC")
+
+
+@cocotb.test()
+async def test_cmp_less_than_sets_n(dut):
+    """Test CMP sets N flag when AC < MEM."""
+    dut._log.info("Test: LDI 5, CMP 10, JN")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x05,  # LDI 5
+        0x02, 0x80,  # CMP [0x80] (5 - 10 = -5, N=1)
+        0x90, 0x14,  # JN 0x14
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x88, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CMP sets N flag")
+
+
+@cocotb.test()
+async def test_cmp_sets_carry_on_borrow(dut):
+    """Test CMP sets carry on borrow."""
+    dut._log.info("Test: LDI 5, CMP 10, JC")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x05,  # LDI 5
+        0x02, 0x80,  # CMP [0x80] (5 - 10, borrow/carry)
+        0x81, 0x14,  # JC 0x14
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x99, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: CMP sets carry on borrow")
+
+
+@cocotb.test()
+async def test_jc_taken(dut):
+    """Test JC when carry is set."""
+    dut._log.info("Test: LDI 0xFF, ADD 1, JC")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 1
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0xFF,  # LDI 0xFF
+        0x30, 0x80,  # ADD [0x80] (overflow, C=1)
+        0x81, 0x14,  # JC 0x14
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0xAA, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JC taken works")
+
+
+@cocotb.test()
+async def test_jc_not_taken(dut):
+    """Test JC when carry is not set."""
+    dut._log.info("Test: LDI 1, ADD 1, JC (not taken)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 1
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x01,  # LDI 1
+        0x30, 0x80,  # ADD [0x80] (no overflow, C=0)
+        0x81, 0x14,  # JC 0x14 (not taken)
+        0xE0, 0xBB,  # LDI 0xBB
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JC not taken works")
+
+
+@cocotb.test()
+async def test_jnc_taken(dut):
+    """Test JNC when carry is not set."""
+    dut._log.info("Test: LDI 1, ADD 1, JNC")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 1
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x01,  # LDI 1
+        0x30, 0x80,  # ADD [0x80] (no overflow, C=0)
+        0x82, 0x14,  # JNC 0x14 (taken)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0xCC, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JNC taken works")
+
+
+@cocotb.test()
+async def test_jnc_not_taken(dut):
+    """Test JNC when carry is set."""
+    dut._log.info("Test: LDI 0xFF, ADD 1, JNC (not taken)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 1
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0xFF,  # LDI 0xFF
+        0x30, 0x80,  # ADD [0x80] (overflow, C=1)
+        0x82, 0x14,  # JNC 0x14 (not taken)
+        0xE0, 0xDD,  # LDI 0xDD
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JNC not taken works")
+
+
+# =============================================================================
+# Y Register Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_tay_basic(dut):
+    """Test TAY (transfer AC to Y)."""
+    dut._log.info("Test: LDI 0x55, TAY, LDI 0, TYA, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x55,  # LDI 0x55
+        0x03,        # TAY
+        0xE0, 0x00,  # LDI 0
+        0x04,        # TYA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TAY works")
+
+
+@cocotb.test()
+async def test_tya_sets_flags(dut):
+    """Test TYA sets flags correctly."""
+    dut._log.info("Test: LDYI 0x80, TYA, JN")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x06, 0x80,  # LDYI 0x80
+        0xE0, 0x00,  # LDI 0 (clear N)
+        0x04,        # TYA (should set N)
+        0x90, 0x10,  # JN 0x10
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0xAA, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TYA sets flags correctly")
+
+
+@cocotb.test()
+async def test_iny_basic(dut):
+    """Test INY (increment Y)."""
+    dut._log.info("Test: LDYI 10, INY, TYA, OUT (11)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x06, 0x0A,  # LDYI 10
+        0x05,        # INY
+        0x04,        # TYA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: INY works")
+
+
+@cocotb.test()
+async def test_ldyi_basic(dut):
+    """Test LDYI (load immediate Y)."""
+    dut._log.info("Test: LDYI 0x33, TYA, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x06, 0x33,  # LDYI 0x33
+        0x04,        # TYA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDYI works")
+
+
+@cocotb.test()
+async def test_ldy_basic(dut):
+    """Test LDY (load Y from memory)."""
+    dut._log.info("Test: LDY [0x80], TYA, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x07, 0x80,  # LDY [0x80]
+        0x04,        # TYA
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x80, 0x77)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDY works")
+
+
+@cocotb.test()
+async def test_sty_basic(dut):
+    """Test STY (store Y to memory)."""
+    dut._log.info("Test: LDYI 0x99, STY [0x80], LDA [0x80], OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x06, 0x99,  # LDYI 0x99
+        0x08, 0x80,  # STY [0x80]
+        0x20, 0x80,  # LDA [0x80]
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: STY works")
+
+
+@cocotb.test()
+async def test_lda_indexed_y(dut):
+    """Test LDA indexed by Y."""
+    dut._log.info("Test: LDYI 5, LDA,Y [0x20], OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x06, 0x05,  # LDYI 5
+        0x22, 0x20,  # LDA,Y [0x20] (0x20 + 5 = 0x25)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x25, 0xBC)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDA indexed Y works")
+
+
+@cocotb.test()
+async def test_sta_indexed_y(dut):
+    """Test STA indexed by Y."""
+    dut._log.info("Test: LDYI 3, LDI 0x66, STA,Y [0x30], LDA [0x33], OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x06, 0x03,  # LDYI 3
+        0xE0, 0x66,  # LDI 0x66
+        0x12, 0x30,  # STA,Y [0x30] (0x30 + 3 = 0x33)
+        0xE0, 0x00,  # LDI 0
+        0x20, 0x33,  # LDA [0x33]
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: STA indexed Y works")
+
+
+# =============================================================================
+# MUL Detailed Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_mul_basic(dut):
+    """Test MUL basic: 3 * 4 = 12."""
+    dut._log.info("Test: LDI 3, LDXI 4, MUL, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x03,  # LDI 3
+        0x7C, 0x04,  # LDXI 4
+        0x09,        # MUL
+        0xD0, 0x00,  # OUT (low byte in AC)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: MUL basic works")
+
+
+@cocotb.test()
+async def test_mul_zero(dut):
+    """Test MUL with zero: 5 * 0 = 0."""
+    dut._log.info("Test: LDI 5, LDXI 0, MUL, JZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x7C, 0x00,  # LDXI 0
+        0x09,        # MUL
+        0xA0, 0x10,  # JZ 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x11, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: MUL zero works")
+
+
+@cocotb.test()
+async def test_mul_one(dut):
+    """Test MUL with one: 7 * 1 = 7."""
+    dut._log.info("Test: LDI 7, LDXI 1, MUL, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x07,  # LDI 7
+        0x7C, 0x01,  # LDXI 1
+        0x09,        # MUL
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: MUL one works")
+
+
+@cocotb.test()
+async def test_mul_16bit_result(dut):
+    """Test MUL with 16-bit result: 16 * 16 = 256."""
+    dut._log.info("Test: LDI 16, LDXI 16, MUL (256=0x100, low=0, high=1)")
+
+    tb = NeanderTB(dut)
+
+    # 16 * 16 = 256 = 0x0100, low byte = 0x00, high byte = 0x01 in Y
+    program = [
+        0xE0, 0x10,  # LDI 16
+        0x7C, 0x10,  # LDXI 16
+        0x09,        # MUL
+        0x04,        # TYA (get high byte)
+        0xD0, 0x00,  # OUT (should be 1)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: MUL 16-bit result works")
+
+
+# =============================================================================
+# DIV/MOD Detailed Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_div_basic(dut):
+    """Test DIV basic: 10 / 3 = 3."""
+    dut._log.info("Test: LDI 10, LDXI 3, DIV, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x7C, 0x03,  # LDXI 3
+        0x0E,        # DIV
+        0xD0, 0x00,  # OUT (quotient in AC)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: DIV basic works")
+
+
+@cocotb.test()
+async def test_div_with_remainder(dut):
+    """Test DIV with remainder: 10 / 3 = 3 remainder 1."""
+    dut._log.info("Test: LDI 10, LDXI 3, DIV, TYA, OUT (remainder=1)")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x7C, 0x03,  # LDXI 3
+        0x0E,        # DIV (Q=3, R=1)
+        0x04,        # TYA (get remainder)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: DIV remainder works")
+
+
+@cocotb.test()
+async def test_div_by_one(dut):
+    """Test DIV by one: 42 / 1 = 42."""
+    dut._log.info("Test: LDI 42, LDXI 1, DIV, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x2A,  # LDI 42
+        0x7C, 0x01,  # LDXI 1
+        0x0E,        # DIV
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: DIV by one works")
+
+
+@cocotb.test()
+async def test_div_by_zero_sets_carry(dut):
+    """Test DIV by zero sets carry flag."""
+    dut._log.info("Test: LDI 10, LDXI 0, DIV, JC")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x7C, 0x00,  # LDXI 0
+        0x0E,        # DIV (divide by zero)
+        0x81, 0x10,  # JC 0x10 (should jump on error)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x33, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: DIV by zero sets carry")
+
+
+@cocotb.test()
+async def test_mod_basic(dut):
+    """Test MOD basic: 10 % 3 = 1."""
+    dut._log.info("Test: LDI 10, LDXI 3, MOD, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x7C, 0x03,  # LDXI 3
+        0x0F,        # MOD
+        0xD0, 0x00,  # OUT (remainder in AC)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: MOD basic works")
+
+
+@cocotb.test()
+async def test_mod_no_remainder(dut):
+    """Test MOD with no remainder: 12 % 4 = 0."""
+    dut._log.info("Test: LDI 12, LDXI 4, MOD, JZ")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0C,  # LDI 12
+        0x7C, 0x04,  # LDXI 4
+        0x0F,        # MOD
+        0xA0, 0x10,  # JZ 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x44, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(3000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: MOD no remainder works")
+
+
+# =============================================================================
+# ADC/SBC Detailed Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_adc_basic_no_carry(dut):
+    """Test ADC basic without carry."""
+    dut._log.info("Test: Clear carry, LDI 5, ADC 3, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Start with no carry (ADD without overflow clears carry)
+    program = [
+        0xE0, 0x01,  # LDI 1
+        0x10, 0x80,  # STA 0x80
+        0x30, 0x80,  # ADD [0x80] (1+1=2, no carry)
+        0xE0, 0x03,  # LDI 3
+        0x10, 0x82,  # STA 0x82
+        0xE0, 0x05,  # LDI 5
+        0x31, 0x82,  # ADC [0x82] (5 + 3 + 0 = 8)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(6000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: ADC basic no carry works")
+
+
+@cocotb.test()
+async def test_sbc_basic_no_borrow(dut):
+    """Test SBC basic without borrow."""
+    dut._log.info("Test: Clear borrow, LDI 10, SBC 3, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Clear carry (no borrow) by doing addition without overflow
+    program = [
+        0xE0, 0x01,  # LDI 1
+        0x10, 0x80,  # STA 0x80
+        0x30, 0x80,  # ADD [0x80] (1+1=2, no carry)
+        0xE0, 0x03,  # LDI 3
+        0x10, 0x81,  # STA 0x81
+        0xE0, 0x0A,  # LDI 10
+        0x51, 0x81,  # SBC [0x81] (10 - 3 - 0 = 7)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(6000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SBC basic no borrow works")
+
+
+# =============================================================================
+# ASR Detailed Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_asr_positive_number(dut):
+    """Test ASR on positive number: 0x40 >> 1 = 0x20."""
+    dut._log.info("Test: LDI 0x40, ASR, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x40,  # LDI 0x40
+        0x61,        # ASR
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: ASR positive works")
+
+
+@cocotb.test()
+async def test_asr_negative_number(dut):
+    """Test ASR on negative number: 0x80 >> 1 = 0xC0 (sign extended)."""
+    dut._log.info("Test: LDI 0x80, ASR, OUT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x80,  # LDI 0x80
+        0x61,        # ASR (preserves sign bit)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: ASR negative works")
+
+
+@cocotb.test()
+async def test_asr_sets_carry(dut):
+    """Test ASR sets carry from LSB."""
+    dut._log.info("Test: LDI 0x01, ASR, JC")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x01,  # LDI 0x01
+        0x61,        # ASR (0x01 -> 0x00, C=1)
+        0x81, 0x10,  # JC 0x10 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x77, 0xD0, 0x00, 0xF0], start_addr=0x10)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(2000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: ASR sets carry works")
+
+
+# =============================================================================
+# Comparison Jump Tests (JLE, JGT, JGE, JBE, JA)
+# =============================================================================
+
+@cocotb.test()
+async def test_jle_taken_less(dut):
+    """Test JLE: jump when AC < value."""
+    dut._log.info("Test: CMP where 5 < 10, JLE")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x05,  # LDI 5
+        0x02, 0x80,  # CMP [0x80] (5 - 10 = -5, N=1)
+        0x83, 0x14,  # JLE 0x14 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x4C, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JLE taken less works")
+
+
+@cocotb.test()
+async def test_jle_taken_equal(dut):
+    """Test JLE: jump when AC == value."""
+    dut._log.info("Test: CMP where 10 == 10, JLE")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x10, 0x80,  # STA 0x80
+        0x02, 0x80,  # CMP [0x80] (10 - 10 = 0, Z=1)
+        0x83, 0x12,  # JLE 0x12 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x4D, 0xD0, 0x00, 0xF0], start_addr=0x12)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JLE taken equal works")
+
+
+@cocotb.test()
+async def test_jgt_taken(dut):
+    """Test JGT: jump when AC > value."""
+    dut._log.info("Test: CMP where 10 > 5, JGT")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x0A,  # LDI 10
+        0x02, 0x80,  # CMP [0x80] (10 - 5 = 5, N=0, Z=0)
+        0x84, 0x14,  # JGT 0x14 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x50, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JGT taken works")
+
+
+@cocotb.test()
+async def test_jge_taken_greater(dut):
+    """Test JGE: jump when AC > value."""
+    dut._log.info("Test: CMP where 10 > 5, JGE")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x0A,  # LDI 10
+        0x02, 0x80,  # CMP [0x80] (10 - 5 = 5, N=0)
+        0x85, 0x14,  # JGE 0x14 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x53, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JGE taken greater works")
+
+
+@cocotb.test()
+async def test_jbe_taken_below(dut):
+    """Test JBE (unsigned): jump when AC < value."""
+    dut._log.info("Test: CMP where 5 < 10 (unsigned), JBE")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x0A,  # LDI 10
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x05,  # LDI 5
+        0x02, 0x80,  # CMP [0x80] (5 - 10, borrow/carry)
+        0x86, 0x14,  # JBE 0x14 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x56, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JBE taken below works")
+
+
+@cocotb.test()
+async def test_ja_taken(dut):
+    """Test JA (unsigned): jump when AC > value."""
+    dut._log.info("Test: CMP where 10 > 5 (unsigned), JA")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0x05,  # LDI 5
+        0x10, 0x80,  # STA 0x80
+        0xE0, 0x0A,  # LDI 10
+        0x02, 0x80,  # CMP [0x80] (10 - 5 = 5, no borrow)
+        0x87, 0x14,  # JA 0x14 (should jump)
+        0xE0, 0xFF,  # Skip
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_program([0xE0, 0x58, 0xD0, 0x00, 0xF0], start_addr=0x14)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: JA taken works")
+
+
+# =============================================================================
+# Frame Pointer Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_tsf_basic(dut):
+    """Test TSF: FP = SP."""
+    dut._log.info("Test: TSF, PUSH, TFS")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0x0A,        # TSF (FP = SP)
+        0xE0, 0x42,  # LDI 0x42
+        0x70,        # PUSH (SP decrements)
+        0x0B,        # TFS (SP = FP, restore)
+        0xE0, 0x00,  # LDI 0
+        0x71,        # POP
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TSF works")
+
+
+@cocotb.test()
+async def test_push_fp_basic(dut):
+    """Test PUSH_FP: MEM[--SP] = FP."""
+    dut._log.info("Test: Set FP, PUSH_FP, POP")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0xAB,  # LDI 0xAB
+        0x70,        # PUSH
+        0x0D,        # POP_FP (FP = 0xAB)
+        0x0C,        # PUSH_FP
+        0x71,        # POP (should get 0xAB)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: PUSH_FP works")
+
+
+@cocotb.test()
+async def test_pop_fp_basic(dut):
+    """Test POP_FP: FP = MEM[SP++]."""
+    dut._log.info("Test: PUSH value, POP_FP")
+
+    tb = NeanderTB(dut)
+
+    program = [
+        0xE0, 0xCD,  # LDI 0xCD
+        0x70,        # PUSH
+        0x0D,        # POP_FP (FP = 0xCD)
+        0x0C,        # PUSH_FP
+        0x71,        # POP
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: POP_FP works")
+
+
+@cocotb.test()
+async def test_lda_fp_indexed(dut):
+    """Test LDA addr,FP: AC = MEM[addr + FP]."""
+    dut._log.info("Test: Set FP=0x10, LDA,FP [0x70]")
+
+    tb = NeanderTB(dut)
+
+    # FP = 0x10, read from 0x70 + 0x10 = 0x80
+    program = [
+        0xE0, 0x10,  # LDI 0x10
+        0x70,        # PUSH
+        0x0D,        # POP_FP (FP = 0x10)
+        0x24, 0x70,  # LDA,FP [0x70] (0x70 + 0x10 = 0x80)
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+    tb.load_memory(0x80, 0x5C)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDA,FP indexed works")
+
+
+@cocotb.test()
+async def test_sta_fp_indexed(dut):
+    """Test STA addr,FP: MEM[addr + FP] = AC."""
+    dut._log.info("Test: Set FP=0x10, STA,FP [0x70]")
+
+    tb = NeanderTB(dut)
+
+    # FP = 0x10, write to 0x70 + 0x10 = 0x80
+    program = [
+        0xE0, 0x10,  # LDI 0x10
+        0x70,        # PUSH
+        0x0D,        # POP_FP (FP = 0x10)
+        0xE0, 0x7E,  # LDI 0x7E
+        0x14, 0x70,  # STA,FP [0x70] (0x70 + 0x10 = 0x80)
+        0xE0, 0x00,  # LDI 0
+        0x20, 0x80,  # LDA [0x80]
+        0xD0, 0x00,  # OUT
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(6000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: STA,FP indexed works")
