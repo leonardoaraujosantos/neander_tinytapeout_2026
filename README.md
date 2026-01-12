@@ -37,7 +37,7 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
   - Hardware division (DIV, MOD: AC / X with quotient and remainder)
   - Multi-byte arithmetic support (ADC, SBC for 16/32-bit operations)
 - FSM-based control unit
-- External memory interface (32 bytes addressable via TinyTapeout pins)
+- SPI memory interface (256 bytes via external SPI SRAM, only 4 pins)
 
 ## Instruction Set
 
@@ -277,7 +277,48 @@ func:   PUSH_FP         ; Save caller's FP
     SHR             ; AC = 0x7C = 124 (sign NOT preserved)
 ```
 
-## Architecture
+## System Architecture
+
+The design is split between **synthesized logic** (on the TinyTapeout ASIC) and **external hardware** (SPI SRAM chip you provide).
+
+```mermaid
+graph TB
+    subgraph ASIC["TinyTapeout ASIC (Synthesized)"]
+        subgraph CPU["Neander-X CPU"]
+            ALU["ALU<br/>+, -, *, /, AND, OR, XOR"]
+            DP["Datapath<br/>PC, AC, SP, FP, X, Y"]
+            CU["Control Unit<br/>FSM"]
+        end
+        SPI["SPI Memory Controller<br/>(parallel ↔ serial)"]
+    end
+
+    subgraph EXT["External Hardware (You Provide)"]
+        SRAM[("SPI SRAM<br/>23LC512<br/>256 bytes")]
+        IO_IN["Switches/Keyboard<br/>(7-bit input)"]
+        IO_OUT["LEDs/Display<br/>(via latch)"]
+    end
+
+    CPU <-->|"parallel bus<br/>addr[7:0], data[7:0]<br/>req, ready"| SPI
+    SPI <-->|"4-wire SPI<br/>CS, SCLK, MOSI, MISO"| SRAM
+    IO_IN -->|"ui_in[7:1]"| CPU
+    CPU -->|"IO_WRITE strobe"| IO_OUT
+```
+
+### What Gets Synthesized?
+
+| Component | File | Synthesized? | Description |
+|-----------|------|--------------|-------------|
+| ALU | `neander_x_alu.sv` | Yes | Arithmetic/logic operations |
+| Datapath | `neander_x_datapath.sv` | Yes | Registers (PC, AC, SP, X, Y, FP) |
+| Control Unit | `neander_x_control_unit.sv` | Yes | FSM with ~90 states |
+| CPU Top | `top_cpu_neander_x.sv` | Yes | CPU integration |
+| SPI Controller | `spi_memory_controller.sv` | Yes | Parallel-to-SPI bridge |
+| TT Wrapper | `project.sv` | Yes | TinyTapeout pin mapping |
+| SPI SRAM Model | `spi_sram_model.sv` | **No** | Simulation only |
+
+The **SPI Memory Controller** converts parallel CPU memory requests into serial SPI transactions. The actual **RAM is external** - you connect a physical SPI SRAM chip (like 23LC512) to the TinyTapeout pins. The `spi_sram_model.sv` file is only used during simulation to emulate that external chip.
+
+## CPU Internal Architecture
 
 ```mermaid
 graph TB
@@ -345,24 +386,29 @@ graph TB
 ### Module Hierarchy
 
 ```
-tt_um_neander (TinyTapeout wrapper)
-└── cpu_top
-    ├── neander_datapath
-    │   ├── pc_reg (Program Counter)
-    │   ├── sp_reg (Stack Pointer)
-    │   ├── fp_reg (Frame Pointer)
-    │   ├── x_reg (X Index Register)
-    │   ├── y_reg (Y Index Register)
-    │   ├── mux_addr (3-way Address MUX)
-    │   ├── generic_reg (REM, RDM, RI, AC)
-    │   ├── neander_alu (ADD, ADC, SUB, SBC, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, ASR, NEG)
-    │   └── nzc_reg (N, Z, C Flags)
-    └── neander_control (FSM)
+tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
+├── cpu_top (top_cpu_neander_x.sv)
+│   ├── neander_datapath (neander_x_datapath.sv)
+│   │   ├── pc_reg (Program Counter, 8-bit)
+│   │   ├── sp_reg (Stack Pointer, 8-bit)
+│   │   ├── fp_reg (Frame Pointer, 8-bit)
+│   │   ├── x_reg (X Index Register)
+│   │   ├── y_reg (Y Index Register)
+│   │   ├── mux_addr (3-way Address MUX)
+│   │   ├── generic_reg (REM, RDM, RI, AC)
+│   │   ├── neander_alu (ADD, ADC, SUB, SBC, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, ASR, NEG)
+│   │   └── nzc_reg (N, Z, C Flags)
+│   └── neander_control (neander_x_control_unit.sv - FSM ~90 states)
+│
+└── spi_memory_controller (spi_memory_controller.sv)
+    ├── SPI Master interface (directly to external SRAM)
+    ├── 8-state FSM (IDLE → CMD → ADDR_HI → ADDR_LO → DATA → DONE)
+    └── ~70 CPU cycles per memory access
 ```
 
 ## Pin Connections
 
-The NEANDER-X processor requires an external 32-byte RAM and optionally an output latch for I/O.
+The NEANDER-X processor uses an **SPI memory interface** to connect to external SPI SRAM, requiring only 4 pins for memory access (vs 15 pins for parallel RAM). This enables a 256-byte address space while freeing pins for debug outputs.
 
 ### Pin Map
 
@@ -370,95 +416,109 @@ The NEANDER-X processor requires an external 32-byte RAM and optionally an outpu
 
 | Pin | Signal | Description |
 |-----|--------|-------------|
-| uo_out[4:0] | RAM_ADDR | 5-bit RAM address (0x00-0x1F) |
-| uo_out[5] | RAM_WE | RAM Write Enable (active high) |
-| uo_out[6] | RAM_OE | RAM Output Enable / Read strobe (active high) |
-| uo_out[7] | IO_WRITE | I/O Write strobe (directly from pulse for output latch) |
+| uo_out[0] | SPI_CS_N | SPI Chip Select (active low) |
+| uo_out[1] | SPI_SCLK | SPI Serial Clock |
+| uo_out[2] | SPI_MOSI | SPI Master Out Slave In (data to SRAM) |
+| uo_out[3:6] | DBG_AC[3:0] | Debug: Accumulator bits 0-3 |
+| uo_out[7] | IO_WRITE | I/O Write strobe for output latch |
 
 #### Bidirectional I/O (`uio`)
 
 | Pin | Signal | Description |
 |-----|--------|-------------|
-| uio[7:0] | RAM_DATA | 8-bit bidirectional RAM data bus |
+| uio[7:0] | DBG_PC | Debug: Program Counter (8-bit) |
 
-- **Direction**: Output when `RAM_WE=1` (writing), Input when `RAM_WE=0` (reading)
-- `uio_oe` = 0xFF during writes, 0x00 during reads
+- **Direction**: All outputs (`uio_oe` = 0xFF)
+- Used for debugging/monitoring PC during execution
 
 #### Dedicated Inputs (`ui_in`)
 
 | Pin | Signal | Description |
 |-----|--------|-------------|
-| ui_in[7:0] | IO_IN | 8-bit input port (directly from for IN instruction) |
+| ui_in[0] | SPI_MISO | SPI Master In Slave Out (data from SRAM) |
+| ui_in[7:1] | IO_IN[7:1] | 7-bit input port for IN instruction |
 
 ### Connection Diagram
 
 ```
-                    TinyTapeout Chip
-                   ┌─────────────────┐
-                   │   NEANDER-X     │
-    Switches/      │                 │
-    Keyboard ────► │ ui_in[7:0]      │
-    (8-bit)        │                 │
-                   │                 │         ┌──────────────┐
-                   │ uo_out[4:0] ───────────► │ ADDR[4:0]    │
-                   │                 │         │              │
-                   │ uo_out[5] ─────────────► │ WE           │
-                   │         (RAM_WE)│         │   External   │
-                   │ uo_out[6] ─────────────► │ OE           │
-                   │         (RAM_OE)│         │   32-byte    │
-                   │                 │         │   SRAM       │
-                   │ uio[7:0] ◄────────────► │ DATA[7:0]    │
-                   │    (bidirectional)       │              │
-                   │                 │         └──────────────┘
+                    TinyTapeout Chip                        SPI SRAM (23LC512)
+                   ┌─────────────────┐                      ┌─────────────────┐
+                   │   NEANDER-X     │                      │                 │
+    Switches ────► │ ui_in[7:1]      │                      │     CS (pin 1)◄─┼── uo_out[0]
+    (7-bit)        │                 │                      │                 │
+                   │                 │                      │    SCK (pin 6)◄─┼── uo_out[1]
+                   │ uo_out[0] ──────┼──────────────────────┼─►               │
+                   │    (SPI_CS_N)   │                      │     SI (pin 5)◄─┼── uo_out[2]
+                   │ uo_out[1] ──────┼──────────────────────┼─►               │
+                   │    (SPI_SCLK)   │                      │     SO (pin 2)──┼─► ui_in[0]
+                   │ uo_out[2] ──────┼──────────────────────┼─►               │
+                   │    (SPI_MOSI)   │                      │    VCC (pin 8)──┼── 3.3V
+                   │                 │                      │    VSS (pin 4)──┼── GND
+                   │ ui_in[0] ◄──────┼──────────────────────┼──               │
+                   │    (SPI_MISO)   │                      │   HOLD (pin 7)──┼── 3.3V
+                   │                 │                      └─────────────────┘
+                   │ uio[7:0] ───────┼─► Debug (PC value)
                    │                 │
-                   │ uo_out[7] ─────────────► Output Latch
-                   │      (IO_WRITE) │         (optional)
-                   │                 │
+                   │ uo_out[7] ──────┼─► Output Latch (optional)
+                   │    (IO_WRITE)   │
                    └─────────────────┘
 ```
 
-### External RAM Timing
+### SPI Memory Interface
 
-**Read Cycle:**
-1. CPU asserts address on `uo_out[4:0]`
-2. CPU asserts `RAM_OE` (uo_out[6] = 1)
-3. RAM places data on `uio[7:0]` (CPU reads via uio_in)
-4. CPU captures data on next clock edge
+The CPU communicates with external SPI SRAM using a 4-wire interface:
 
-**Write Cycle:**
-1. CPU asserts address on `uo_out[4:0]`
-2. CPU drives data on `uio[7:0]` (uio_oe = 0xFF)
-3. CPU asserts `RAM_WE` (uo_out[5] = 1)
-4. RAM captures data on write enable
+| Signal | Direction | Description |
+|--------|-----------|-------------|
+| SPI_CS_N | Output | Chip select, active LOW during transactions |
+| SPI_SCLK | Output | Serial clock (CPU_CLK / 2) |
+| SPI_MOSI | Output | Data from CPU to SRAM |
+| SPI_MISO | Input | Data from SRAM to CPU |
+
+**Protocol:** Standard SPI Mode 0 (CPOL=0, CPHA=0)
+- READ command: 0x03
+- WRITE command: 0x02
+- Each memory access takes ~70 CPU cycles
+
+For detailed protocol information, see [SPI SRAM Memory](docs/SPI_SRAM_MEMORY.md).
 
 ### I/O Interface
 
 **Input (IN instruction):**
-- Connect switches, keyboard, or other input device to `ui_in[7:0]`
+- Connect switches or keyboard to `ui_in[7:1]` (7 bits available)
+- Note: `ui_in[0]` is reserved for SPI_MISO
 - The IN instruction reads this port directly into AC
 
 **Output (OUT instruction):**
 - When executing OUT, the CPU pulses `uo_out[7]` (IO_WRITE) high
-- Data appears on `uio[7:0]` simultaneously
-- Connect an external latch (e.g., 74HC574) to capture output:
-  - Latch clock ← `uo_out[7]`
-  - Latch data ← `uio[7:0]`
-  - Latch output → LEDs or display
+- Connect an external latch (e.g., 74HC574) to capture AC value
+- AC bits [3:0] are also visible on `uo_out[6:3]` for debugging
 
 ### Recommended External Components
 
 | Component | Purpose | Example Parts |
 |-----------|---------|---------------|
-| 32-byte SRAM | Program and data storage | 6116 (2Kx8), AS6C1008 |
+| SPI SRAM | Program and data storage (256 bytes) | **23LC512**, 23K256, 23LC1024 |
 | 8-bit Latch | Capture I/O output | 74HC574, 74HC374 |
-| DIP Switches | Input port | 8-position DIP |
+| DIP Switches | Input port (7-bit) | 8-position DIP (bit 0 unused) |
 | LED Array | Display output | 8x LEDs with resistors |
+
+### Pin Savings: SPI vs Parallel
+
+| Interface | Memory Pins | Address Space | Debug Pins Available |
+|-----------|-------------|---------------|---------------------|
+| Parallel (old) | 15 pins | 32 bytes | 0 |
+| **SPI (current)** | **4 pins** | **256 bytes** | **12 pins** |
+
+The SPI interface saves 11 pins while providing 8x more memory!
 
 ## Documentation
 
 - [Project Info (TinyTapeout)](docs/info.md) - Pin interface and testing guide
 - [NEANDER CPU Guide](docs/NEANDER_cpu.md) - Complete architecture and implementation details
 - [Stack Extension](docs/NEANDER_X_STACK.md) - PUSH/POP/CALL/RET documentation
+- [SPI SRAM Memory](docs/SPI_SRAM_MEMORY.md) - External SPI SRAM protocol and compatible chips
+- [SPI Memory Controller](docs/SPI_MEM_CONTROLLER.md) - SPI controller implementation details
 - [LCC Compiler Backend](docs/LCC_NEANDER_BACKEND.md) - Guide for targeting LCC C compiler to NEANDER-X
 - [LCC Compiler Reference](docs/LCC_COMPILER_COMPLETE.md) - Complete LCC retargeting guide (Portuguese)
 - [GitHub Actions](docs/GITHUB_ACTIONS.md) - CI/CD workflow explanation

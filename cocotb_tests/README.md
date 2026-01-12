@@ -1,32 +1,75 @@
 # Neander CPU - Cocotb Tests
 
-Testes automatizados para a CPU Neander-X usando cocotb.
+Automated tests for the Neander-X CPU using cocotb with SPI memory interface.
 
-## Requisitos
+## Architecture
+
+The testbench uses an SPI memory interface to simulate external SRAM:
+
+```
+┌─────────────┐     Parallel      ┌─────────────┐      SPI       ┌─────────────┐
+│  Neander-X  │◄──────────────────│ SPI Memory  │◄───────────────│  SPI SRAM   │
+│     CPU     │  mem_req/ready    │ Controller  │  CS/SCLK/MOSI  │   Model     │
+└─────────────┘                   └─────────────┘      MISO      └─────────────┘
+```
+
+### Key Components
+
+| File | Description |
+|------|-------------|
+| `neander_tb_wrapper.sv` | Testbench wrapper with CPU, SPI controller, and debug signals |
+| `spi_sram_model.sv` | Behavioral SPI SRAM model (from `src/`) |
+| `test_neander.py` | Main test suite with 123 tests |
+| `test_debug.py` | Debug trace test for SPI timing verification |
+
+## Requirements
 
 ```bash
 pip install cocotb
 ```
 
-Para simuladores:
-- **Icarus Verilog** (recomendado): `brew install icarus-verilog`
+Simulators:
+- **Icarus Verilog** (recommended): `brew install icarus-verilog`
 - **Verilator**: `brew install verilator`
 
-## Executar Testes
+## Running Tests
 
 ```bash
 cd cocotb_tests
 make
 ```
 
-Para usar Verilator:
+For Verilator:
 ```bash
 make SIM=verilator
 ```
 
-## Testes Incluidos
+## Memory Loading
 
-O arquivo de testes contém **123 testes automatizados** cobrindo todas as instruções do NEANDER-X.
+Tests load programs directly into the SPI SRAM model's memory array:
+
+```python
+# In Python test
+tb.load_memory(0x00, 0xE0)  # LDI opcode
+tb.load_memory(0x01, 0x42)  # immediate value
+
+# Or load a program
+program = [0xE0, 0x42, 0xD0, 0x00, 0xF0]  # LDI 0x42, OUT 0, HLT
+tb.load_program(program)
+```
+
+The memory is accessed by the CPU through the SPI controller, which adds ~70 cycles latency per memory access.
+
+## Test Timing
+
+Due to SPI latency, tests run longer than with parallel memory:
+- Each memory access takes ~70 CPU cycles
+- Simple programs (LDI, OUT, HLT) complete in ~300 cycles
+- Complex programs may need 2000+ cycles
+
+## Tests Included
+
+The test suite contains **123 automated tests** covering all NEANDER-X instructions.
 
 ### Testes Básicos
 
@@ -265,25 +308,48 @@ Com a instrução MUL, o mesmo programa pode ser simplificado:
         HLT
 ```
 
-## Estrutura de Arquivos
+## File Structure
 
 ```
 cocotb_tests/
-├── Makefile              # Makefile para cocotb
-├── neander_tb_wrapper.sv # Wrapper com RAM e interface de carga
-├── test_neander.py       # Testes Python (123 testes)
-└── README.md             # Este arquivo
+├── Makefile              # Cocotb makefile
+├── neander_tb_wrapper.sv # Testbench wrapper with SPI controller and debug signals
+├── test_neander.py       # Main test suite (123 tests)
+├── test_debug.py         # SPI timing debug test
+└── README.md             # This file
+
+src/
+├── top_cpu_neander_x.sv      # CPU top module
+├── neander_x_datapath.sv     # Datapath (registers, ALU, muxes)
+├── neander_x_control_unit.sv # Control unit FSM
+├── neander_x_alu.sv          # ALU with MUL/DIV/MOD
+├── spi_memory_controller.sv  # SPI memory controller
+├── spi_sram_model.sv         # SPI SRAM behavioral model
+└── project.sv                # TinyTapeout top-level wrapper
 ```
 
-## Implementação
+## Implementation
 
-O arquivo `src/top_cpu_neander_x.sv` é a implementação principal da CPU Neander-X com:
-- Suporte completo a I/O (IN/OUT)
+The `src/top_cpu_neander_x.sv` is the main CPU implementation with:
+- Full I/O support (IN/OUT)
 - Stack operations (PUSH, POP, CALL, RET)
 - LCC compiler extension (NEG, CMP, SUB, INC, DEC, XOR, SHL, SHR, JC, JNC)
 - X register extension (LDX, STX, LDXI, TAX, TXA, INX, indexed addressing)
 - Y register extension (LDY, STY, LDYI, TAY, TYA, INY, indexed addressing)
 - Frame pointer extension (TSF, TFS, PUSH_FP, POP_FP, FP-indexed addressing)
 - Hardware multiplication (MUL: AC * X -> Y:AC)
+- Hardware division (DIV, MOD: AC / X -> AC quotient, Y remainder)
 - Carry flag (C) for arithmetic overflow detection
-- Interface externa para RAM
+- SPI memory interface with request/ready handshaking
+
+## SPI Memory Controller
+
+The SPI memory controller (`src/spi_memory_controller.sv`) bridges the CPU's parallel interface to serial SPI:
+
+- **Protocol**: SPI Mode 0 (CPOL=0, CPHA=0)
+- **Commands**: READ (0x03), WRITE (0x02)
+- **Address**: 16-bit (high byte always 0x00 for 8-bit CPU)
+- **Clock**: CPU_CLK / 2
+- **Latency**: ~70 cycles per memory access
+
+See [SPI Memory Controller Documentation](../docs/SPI_MEM_CONTROLLER.md) for details.

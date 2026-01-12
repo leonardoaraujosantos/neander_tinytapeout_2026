@@ -156,7 +156,7 @@ class NeanderTestbench:
         await RisingEdge(self.dut.clk)
         return int(self.dut.mem_read_data.value)
 
-    async def run_until_halt(self, max_cycles=10000):
+    async def run_until_halt(self, max_cycles=100000):
         """Run CPU until HLT instruction (PC stops changing) or timeout"""
         last_pc = -1
         halt_counter = 0
@@ -181,7 +181,7 @@ class NeanderTestbench:
 
         raise TimeoutError(f"CPU did not halt within {max_cycles} cycles")
 
-    async def wait_for_io_write(self, max_cycles=10000):
+    async def wait_for_io_write(self, max_cycles=100000):
         """Wait for an I/O write operation"""
         cycles = 0
         while cycles < max_cycles:
@@ -284,7 +284,7 @@ async def test_multiply_by_5_basic(dut):
     await tb.reset()
 
     # Wait for output
-    result = await tb.wait_for_io_write(max_cycles=5000)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
 
@@ -312,7 +312,7 @@ async def test_multiply_by_5_larger(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=5000)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Expected {expected}, got {result}"
@@ -335,7 +335,7 @@ async def test_multiply_by_5_overflow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=5000)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Expected {expected}, got {result}"
@@ -358,7 +358,7 @@ async def test_multiply_by_5_zero(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=5000)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Expected {expected}, got {result}"
@@ -403,7 +403,7 @@ async def test_simple_add(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Expected {expected}, got {result}"
@@ -463,7 +463,7 @@ async def test_loop_countdown(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=5000)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Expected {expected}, got {result}"
@@ -500,7 +500,7 @@ async def test_logical_operations(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -539,7 +539,7 @@ async def test_conditional_jump_jn(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JN did not jump correctly. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -573,7 +573,7 @@ async def test_nop_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"NOP affected AC. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -609,7 +609,7 @@ async def test_jnz_instruction_jump(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JNZ did not jump. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -645,7 +645,7 @@ async def test_jnz_instruction_no_jump(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JNZ jumped when it shouldn't. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -681,7 +681,7 @@ async def test_jz_instruction_jump(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JZ did not jump. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -717,7 +717,7 @@ async def test_jz_instruction_no_jump(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JZ jumped when it shouldn't. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -753,7 +753,7 @@ async def test_jn_instruction_no_jump(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JN jumped when it shouldn't. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -783,7 +783,7 @@ async def test_in_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"IN instruction failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -813,7 +813,7 @@ async def test_in_status_port(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"IN status failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -844,7 +844,7 @@ async def test_sta_lda_memory(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"STA/LDA failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -900,7 +900,7 @@ async def test_flags_zero(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Z flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -952,7 +952,7 @@ async def test_flags_negative(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"N flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -983,7 +983,7 @@ async def test_edge_case_max_value(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Overflow test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1011,7 +1011,7 @@ async def test_edge_case_boundary_0x80(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Boundary test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1046,7 +1046,7 @@ async def test_jmp_unconditional(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JMP test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1070,11 +1070,11 @@ async def test_reset_behavior(dut):
 
     # Run first time
     await tb.reset()
-    result1 = await tb.wait_for_io_write(max_cycles=2000)
+    result1 = await tb.wait_for_io_write(max_cycles=20000)
 
     # Reset and run again - should produce same result
     await tb.reset()
-    result2 = await tb.wait_for_io_write(max_cycles=2000)
+    result2 = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"First run: 0x{result1:02X}, Second run: 0x{result2:02X}")
 
@@ -1127,7 +1127,7 @@ async def test_all_alu_operations(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"ALU test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1161,7 +1161,7 @@ async def test_push_pop_single(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"PUSH/POP test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1206,7 +1206,7 @@ async def test_push_pop_multiple(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Multiple PUSH/POP test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1256,7 +1256,7 @@ async def test_push_pop_flags(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"POP N flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1297,7 +1297,7 @@ async def test_push_pop_zero_flag(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"POP Z flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1340,7 +1340,7 @@ async def test_stack_with_subroutine_simulation(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Save/restore test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1389,7 +1389,7 @@ async def test_call_ret_simple(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"CALL/RET test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1436,7 +1436,7 @@ async def test_call_ret_with_parameter(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"CALL/RET param test failed. Expected {expected}, got {result}"
@@ -1495,7 +1495,7 @@ async def test_nested_calls(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=4000)
+    result = await tb.wait_for_io_write(max_cycles=40000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Nested CALL/RET test failed. Expected {expected}, got {result}"
@@ -1542,7 +1542,7 @@ async def test_call_ret_preserves_stack(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Stack integrity test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1599,7 +1599,7 @@ async def test_multiple_calls_same_subroutine(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=5000)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Multiple calls test failed. Expected {expected}, got {result}"
@@ -1694,7 +1694,7 @@ async def test_loop_with_function_call(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=8000)
+    result = await tb.wait_for_io_write(max_cycles=80000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Loop with function call test failed. Expected {expected}, got {result}"
@@ -1730,7 +1730,7 @@ async def test_sub_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"SUB test failed. Expected {expected}, got {result}"
@@ -1762,7 +1762,7 @@ async def test_sub_underflow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"SUB underflow test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1790,7 +1790,7 @@ async def test_inc_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"INC test failed. Expected {expected}, got {result}"
@@ -1818,7 +1818,7 @@ async def test_inc_overflow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"INC overflow test failed. Expected {expected}, got {result}"
@@ -1846,7 +1846,7 @@ async def test_dec_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"DEC test failed. Expected {expected}, got {result}"
@@ -1874,7 +1874,7 @@ async def test_dec_underflow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"DEC underflow test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1906,7 +1906,7 @@ async def test_xor_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"XOR test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1937,7 +1937,7 @@ async def test_xor_self_zero(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"XOR self test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1965,7 +1965,7 @@ async def test_shl_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"SHL test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -1993,7 +1993,7 @@ async def test_shl_msb_loss(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"SHL MSB loss test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2021,7 +2021,7 @@ async def test_shr_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"SHR test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2049,7 +2049,7 @@ async def test_shr_lsb_loss(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"SHR LSB loss test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2081,7 +2081,7 @@ async def test_inc_dec_chain(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"INC/DEC chain test failed. Expected {expected}, got {result}"
@@ -2109,7 +2109,7 @@ async def test_multiply_by_2_using_shl(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Multiply by 2 test failed. Expected {expected}, got {result}"
@@ -2137,7 +2137,7 @@ async def test_divide_by_2_using_shr(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Divide by 2 test failed. Expected {expected}, got {result}"
@@ -2169,7 +2169,7 @@ async def test_countdown_with_dec(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Countdown with DEC failed. Expected {expected}, got {result}"
@@ -2220,7 +2220,7 @@ async def test_lcc_comprehensive(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Comprehensive LCC test failed. Expected {expected}, got {result}"
@@ -2252,7 +2252,7 @@ async def test_ldxi_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"LDXI test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2282,7 +2282,7 @@ async def test_tax_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"TAX test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2310,7 +2310,7 @@ async def test_txa_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"TXA test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2339,7 +2339,7 @@ async def test_inx_instruction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"INX test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2368,7 +2368,7 @@ async def test_inx_overflow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"INX overflow test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2403,7 +2403,7 @@ async def test_ldx_stx_instructions(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"LDX/STX test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2447,7 +2447,7 @@ async def test_lda_indexed(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=4000)
+    result = await tb.wait_for_io_write(max_cycles=40000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"LDA indexed test failed. Expected {expected}, got {result}"
@@ -2485,7 +2485,7 @@ async def test_sta_indexed(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"STA indexed test failed. Expected {expected}, got {result}"
@@ -2550,7 +2550,7 @@ async def test_array_sum_indexed(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=8000)
+    result = await tb.wait_for_io_write(max_cycles=80000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Array sum test failed. Expected {expected}, got {result}"
@@ -2590,7 +2590,7 @@ async def test_x_register_loop(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=5000)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"X register loop test failed. Expected {expected}, got {result}"
@@ -2645,7 +2645,7 @@ async def test_array_fill_indexed(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=8000)
+    result = await tb.wait_for_io_write(max_cycles=80000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
     assert result == expected, f"Array fill test failed. Expected {expected}, got {result}"
@@ -2681,7 +2681,7 @@ async def test_txa_flags(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"TXA Z flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2716,7 +2716,7 @@ async def test_txa_negative_flag(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"TXA N flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2748,7 +2748,7 @@ async def test_neg_positive(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"NEG test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2776,7 +2776,7 @@ async def test_neg_negative(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"NEG test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2804,7 +2804,7 @@ async def test_neg_zero(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"NEG test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2839,7 +2839,7 @@ async def test_neg_sets_n_flag(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"NEG N flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2874,7 +2874,7 @@ async def test_neg_sets_z_flag(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"NEG Z flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2912,7 +2912,7 @@ async def test_cmp_equal(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"CMP equal test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2951,7 +2951,7 @@ async def test_cmp_not_equal(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"CMP not equal test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -2983,7 +2983,7 @@ async def test_cmp_preserves_ac(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"CMP preserves AC test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3022,7 +3022,7 @@ async def test_cmp_less_than_sets_n(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"CMP less than test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3063,7 +3063,7 @@ async def test_jc_taken(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JC taken test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3104,7 +3104,7 @@ async def test_jc_not_taken(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JC not taken test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3145,7 +3145,7 @@ async def test_jnc_taken(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JNC taken test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3186,7 +3186,7 @@ async def test_jnc_not_taken(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"JNC not taken test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3227,7 +3227,7 @@ async def test_sub_sets_carry(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"SUB carry test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3268,7 +3268,7 @@ async def test_cmp_sets_carry_on_borrow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"CMP carry test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3304,7 +3304,7 @@ async def test_tay_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"TAY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3342,7 +3342,7 @@ async def test_tya_sets_flags(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"TYA N flag test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3374,7 +3374,7 @@ async def test_iny_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"INY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3402,7 +3402,7 @@ async def test_ldyi_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"LDYI test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3435,7 +3435,7 @@ async def test_ldy_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"LDY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3466,7 +3466,7 @@ async def test_sty_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"STY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3507,7 +3507,7 @@ async def test_lda_indexed_y(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"LDA indexed Y test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3539,7 +3539,7 @@ async def test_sta_indexed_y(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=2000)
+    result = await tb.wait_for_io_write(max_cycles=20000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"STA indexed Y test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3600,7 +3600,7 @@ async def test_array_copy_xy(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=3000)
+    result = await tb.wait_for_io_write(max_cycles=30000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Array copy XY test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3632,7 +3632,7 @@ async def test_mul_basic(dut):
     await tb.reset()
 
     expected = 15  # 5 * 3 = 15
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"MUL basic test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3659,7 +3659,7 @@ async def test_mul_zero(dut):
     await tb.reset()
 
     expected = 0
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"MUL zero test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3686,7 +3686,7 @@ async def test_mul_one(dut):
     await tb.reset()
 
     expected = 42
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"MUL one test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3715,12 +3715,12 @@ async def test_mul_16bit_result(dut):
     await tb.reset()
 
     # First output should be low byte (0)
-    result_low = await tb.wait_for_io_write(max_cycles=500)
+    result_low = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"Low byte: 0x{result_low:02X} (expected: 0x00)")
     assert result_low == 0x00, f"MUL 16-bit low byte failed. Expected 0x00, got 0x{result_low:02X}"
 
     # Second output should be high byte (1)
-    result_high = await tb.wait_for_io_write(max_cycles=500)
+    result_high = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"High byte: 0x{result_high:02X} (expected: 0x01)")
     assert result_high == 0x01, f"MUL 16-bit high byte failed. Expected 0x01, got 0x{result_high:02X}"
 
@@ -3748,12 +3748,12 @@ async def test_mul_large_result(dut):
     await tb.reset()
 
     # Low byte = 0x40
-    result_low = await tb.wait_for_io_write(max_cycles=500)
+    result_low = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"Low byte: 0x{result_low:02X} (expected: 0x40)")
     assert result_low == 0x40, f"MUL large low byte failed. Expected 0x40, got 0x{result_low:02X}"
 
     # High byte = 0x9C
-    result_high = await tb.wait_for_io_write(max_cycles=500)
+    result_high = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"High byte: 0x{result_high:02X} (expected: 0x9C)")
     assert result_high == 0x9C, f"MUL large high byte failed. Expected 0x9C, got 0x{result_high:02X}"
 
@@ -3781,12 +3781,12 @@ async def test_mul_max_values(dut):
     await tb.reset()
 
     # Low byte = 0x01
-    result_low = await tb.wait_for_io_write(max_cycles=500)
+    result_low = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"Low byte: 0x{result_low:02X} (expected: 0x01)")
     assert result_low == 0x01, f"MUL max low byte failed. Expected 0x01, got 0x{result_low:02X}"
 
     # High byte = 0xFE
-    result_high = await tb.wait_for_io_write(max_cycles=500)
+    result_high = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"High byte: 0x{result_high:02X} (expected: 0xFE)")
     assert result_high == 0xFE, f"MUL max high byte failed. Expected 0xFE, got 0x{result_high:02X}"
 
@@ -3822,7 +3822,7 @@ async def test_mul_sets_carry_on_overflow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"Carry flag test: 0x{result:02X} (expected: 0x01 if carry set)")
     assert result == 0x01, f"MUL should set carry on overflow. Expected 0x01, got 0x{result:02X}"
 
@@ -3858,7 +3858,7 @@ async def test_mul_no_carry_small_result(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"No carry flag test: 0x{result:02X} (expected: 0x01 if no carry)")
     assert result == 0x01, f"MUL should not set carry for small result. Expected 0x01, got 0x{result:02X}"
 
@@ -3891,7 +3891,7 @@ async def test_mul_factorial_5(dut):
     await tb.reset()
 
     expected = 120  # 5! = 120
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"5! = {result} (expected: {expected})")
     assert result == expected, f"Factorial test failed. Expected {expected}, got {result}"
@@ -3926,7 +3926,7 @@ async def test_mul_power_of_2(dut):
     await tb.reset()
 
     expected = 1  # High byte of 256 (0x0100) is 0x01
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"2^8 high byte = 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Power of 2 test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -3957,7 +3957,7 @@ async def test_div_basic(dut):
     await tb.reset()
 
     expected = 5  # 15 / 3 = 5
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"DIV basic: 15 / 3 = {result} (expected: {expected})")
     assert result == expected, f"DIV basic test failed. Expected {expected}, got {result}"
@@ -3986,12 +3986,12 @@ async def test_div_with_remainder(dut):
     await tb.reset()
 
     # First output: quotient = 3
-    quotient = await tb.wait_for_io_write(max_cycles=500)
+    quotient = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"DIV quotient: 17 / 5 = {quotient} (expected: 3)")
     assert quotient == 3, f"DIV quotient failed. Expected 3, got {quotient}"
 
     # Second output: remainder = 2
-    remainder = await tb.wait_for_io_write(max_cycles=500)
+    remainder = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"DIV remainder: 17 % 5 = {remainder} (expected: 2)")
     assert remainder == 2, f"DIV remainder failed. Expected 2, got {remainder}"
 
@@ -4016,7 +4016,7 @@ async def test_div_by_one(dut):
     await tb.reset()
 
     expected = 42
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"DIV by 1: 42 / 1 = {result} (expected: {expected})")
     assert result == expected, f"DIV by 1 failed. Expected {expected}, got {result}"
@@ -4042,7 +4042,7 @@ async def test_div_zero_dividend(dut):
     await tb.reset()
 
     expected = 0
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"DIV zero dividend: 0 / 5 = {result} (expected: {expected})")
     assert result == expected, f"DIV zero dividend failed. Expected {expected}, got {result}"
@@ -4090,7 +4090,7 @@ async def test_div_by_zero_sets_carry(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"DIV by zero carry test: 0x{result:02X} (expected: 0x01 if carry set)")
     assert result == 0x01, f"DIV by zero should set carry. Expected 0x01, got 0x{result:02X}"
 
@@ -4115,7 +4115,7 @@ async def test_div_large_values(dut):
     await tb.reset()
 
     expected = 8  # 200 / 25 = 8
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"DIV large: 200 / 25 = {result} (expected: {expected})")
     assert result == expected, f"DIV large test failed. Expected {expected}, got {result}"
@@ -4142,7 +4142,7 @@ async def test_mod_basic(dut):
     await tb.reset()
 
     expected = 2  # 17 % 5 = 2
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"MOD basic: 17 % 5 = {result} (expected: {expected})")
     assert result == expected, f"MOD basic test failed. Expected {expected}, got {result}"
@@ -4168,7 +4168,7 @@ async def test_mod_no_remainder(dut):
     await tb.reset()
 
     expected = 0  # 15 % 3 = 0
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"MOD no remainder: 15 % 3 = {result} (expected: {expected})")
     assert result == expected, f"MOD no remainder test failed. Expected {expected}, got {result}"
@@ -4196,7 +4196,7 @@ async def test_mod_quotient_in_y(dut):
     await tb.reset()
 
     expected = 3  # 17 / 5 = 3
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"MOD quotient in Y: 17 / 5 = {result} (expected: {expected})")
     assert result == expected, f"MOD quotient in Y test failed. Expected {expected}, got {result}"
@@ -4238,7 +4238,7 @@ async def test_mod_by_zero_sets_carry(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     dut._log.info(f"MOD by zero carry test: 0x{result:02X} (expected: 0x01 if carry set)")
     assert result == 0x01, f"MOD by zero should set carry. Expected 0x01, got 0x{result:02X}"
 
@@ -4264,7 +4264,7 @@ async def test_mod_larger_divisor(dut):
     await tb.reset()
 
     expected = 5  # 5 % 10 = 5
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"MOD larger divisor: 5 % 10 = {result} (expected: {expected})")
     assert result == expected, f"MOD larger divisor test failed. Expected {expected}, got {result}"
@@ -4293,8 +4293,8 @@ async def test_div_mod_combined(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    quotient = await tb.wait_for_io_write(max_cycles=500)
-    remainder = await tb.wait_for_io_write(max_cycles=500)
+    quotient = await tb.wait_for_io_write(max_cycles=50000)
+    remainder = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"DIV/MOD combined: 23 / 7 = {quotient} remainder {remainder}")
     assert quotient == 3, f"Combined quotient failed. Expected 3, got {quotient}"
@@ -4338,7 +4338,7 @@ async def test_adc_basic_no_carry(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 8
     dut._log.info(f"ADC no carry: 5 + 3 + 0 = {result} (expected: {expected})")
     assert result == expected, f"ADC basic test failed. Expected {expected}, got {result}"
@@ -4370,7 +4370,7 @@ async def test_adc_with_carry_set(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 9  # 5 + 3 + 1 = 9
     dut._log.info(f"ADC with carry: 5 + 3 + 1 = {result} (expected: {expected})")
     assert result == expected, f"ADC with carry test failed. Expected {expected}, got {result}"
@@ -4416,8 +4416,8 @@ async def test_adc_16bit_addition(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    low_result = await tb.wait_for_io_write(max_cycles=500)
-    high_result = await tb.wait_for_io_write(max_cycles=500)
+    low_result = await tb.wait_for_io_write(max_cycles=50000)
+    high_result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"16-bit ADC: 0x0102 + 0x0304 = 0x{high_result:02X}{low_result:02X}")
     assert low_result == 0x06, f"Low byte failed. Expected 0x06, got 0x{low_result:02X}"
@@ -4463,8 +4463,8 @@ async def test_adc_16bit_with_carry_propagation(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    low_result = await tb.wait_for_io_write(max_cycles=500)
-    high_result = await tb.wait_for_io_write(max_cycles=500)
+    low_result = await tb.wait_for_io_write(max_cycles=50000)
+    high_result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"16-bit ADC with carry: 0x00FF + 0x0001 = 0x{high_result:02X}{low_result:02X}")
     assert low_result == 0x00, f"Low byte failed. Expected 0x00, got 0x{low_result:02X}"
@@ -4499,7 +4499,7 @@ async def test_sbc_basic_no_borrow(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 7
     dut._log.info(f"SBC no borrow: 10 - 3 - 0 = {result} (expected: {expected})")
     assert result == expected, f"SBC basic test failed. Expected {expected}, got {result}"
@@ -4531,7 +4531,7 @@ async def test_sbc_with_borrow_set(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 6  # 10 - 3 - 1 = 6
     dut._log.info(f"SBC with borrow: 10 - 3 - 1 = {result} (expected: {expected})")
     assert result == expected, f"SBC with borrow test failed. Expected {expected}, got {result}"
@@ -4576,8 +4576,8 @@ async def test_sbc_16bit_subtraction(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    low_result = await tb.wait_for_io_write(max_cycles=500)
-    high_result = await tb.wait_for_io_write(max_cycles=500)
+    low_result = await tb.wait_for_io_write(max_cycles=50000)
+    high_result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"16-bit SBC: 0x0304 - 0x0102 = 0x{high_result:02X}{low_result:02X}")
     assert low_result == 0x02, f"Low byte failed. Expected 0x02, got 0x{low_result:02X}"
@@ -4623,8 +4623,8 @@ async def test_sbc_16bit_with_borrow_propagation(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    low_result = await tb.wait_for_io_write(max_cycles=500)
-    high_result = await tb.wait_for_io_write(max_cycles=500)
+    low_result = await tb.wait_for_io_write(max_cycles=50000)
+    high_result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"16-bit SBC with borrow: 0x0100 - 0x0001 = 0x{high_result:02X}{low_result:02X}")
     assert low_result == 0xFF, f"Low byte failed. Expected 0xFF, got 0x{low_result:02X}"
@@ -4651,7 +4651,7 @@ async def test_asr_positive_number(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 4  # 8 >> 1 = 4
     dut._log.info(f"ASR positive: 8 >> 1 = {result} (expected: {expected})")
     assert result == expected, f"ASR positive test failed. Expected {expected}, got {result}"
@@ -4677,7 +4677,7 @@ async def test_asr_negative_number(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 0xFC  # -4 in two's complement
     dut._log.info(f"ASR negative: 0xF8 >> 1 = 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"ASR negative test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -4707,8 +4707,8 @@ async def test_asr_vs_shr_negative(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    asr_result = await tb.wait_for_io_write(max_cycles=500)
-    shr_result = await tb.wait_for_io_write(max_cycles=500)
+    asr_result = await tb.wait_for_io_write(max_cycles=50000)
+    shr_result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"ASR(-2) = 0x{asr_result:02X}, SHR(-2) = 0x{shr_result:02X}")
     assert asr_result == 0xFF, f"ASR failed. Expected 0xFF, got 0x{asr_result:02X}"
@@ -4749,7 +4749,7 @@ async def test_asr_sets_carry(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     assert result == 1, f"ASR carry test failed. Expected 1 (carry set), got {result}"
 
     dut._log.info("Test PASSED!")
@@ -4775,7 +4775,7 @@ async def test_asr_multiple_shifts(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 0xF8  # -8
     dut._log.info(f"ASR multiple: -128 >> 4 = 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"ASR multiple test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
@@ -4818,7 +4818,7 @@ async def test_jle_taken_less(dut):
     await tb.reset()
 
     expected = 0x4C
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JLE (less): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JLE taken (less) failed"
@@ -4852,7 +4852,7 @@ async def test_jle_taken_equal(dut):
     await tb.reset()
 
     expected = 0x4D
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JLE (equal): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JLE taken (equal) failed"
@@ -4887,7 +4887,7 @@ async def test_jle_not_taken(dut):
     await tb.reset()
 
     expected = 0x4E
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JLE (not taken): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JLE not taken failed"
@@ -4924,7 +4924,7 @@ async def test_jgt_taken(dut):
     await tb.reset()
 
     expected = 0x50
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JGT (taken): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JGT taken failed"
@@ -4959,7 +4959,7 @@ async def test_jgt_not_taken_less(dut):
     await tb.reset()
 
     expected = 0x51
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JGT (not taken, less): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JGT not taken (less) failed"
@@ -4993,7 +4993,7 @@ async def test_jgt_not_taken_equal(dut):
     await tb.reset()
 
     expected = 0x52
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JGT (not taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JGT not taken (equal) failed"
@@ -5030,7 +5030,7 @@ async def test_jge_taken_greater(dut):
     await tb.reset()
 
     expected = 0x53
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JGE (taken, greater): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JGE taken (greater) failed"
@@ -5064,7 +5064,7 @@ async def test_jge_taken_equal(dut):
     await tb.reset()
 
     expected = 0x54
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JGE (taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JGE taken (equal) failed"
@@ -5099,7 +5099,7 @@ async def test_jge_not_taken(dut):
     await tb.reset()
 
     expected = 0x55
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JGE (not taken): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JGE not taken failed"
@@ -5136,7 +5136,7 @@ async def test_jbe_taken_below(dut):
     await tb.reset()
 
     expected = 0x56
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JBE (taken, below): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JBE taken (below) failed"
@@ -5170,7 +5170,7 @@ async def test_jbe_taken_equal(dut):
     await tb.reset()
 
     expected = 0x57
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JBE (taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JBE taken (equal) failed"
@@ -5205,7 +5205,7 @@ async def test_jbe_not_taken(dut):
     await tb.reset()
 
     expected = 0x58
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JBE (not taken): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JBE not taken failed"
@@ -5242,7 +5242,7 @@ async def test_ja_taken(dut):
     await tb.reset()
 
     expected = 0x59
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JA (taken): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JA taken failed"
@@ -5277,7 +5277,7 @@ async def test_ja_not_taken_below(dut):
     await tb.reset()
 
     expected = 0x5A
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JA (not taken, below): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JA not taken (below) failed"
@@ -5311,7 +5311,7 @@ async def test_ja_not_taken_equal(dut):
     await tb.reset()
 
     expected = 0x5B
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"JA (not taken, equal): result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"JA not taken (equal) failed"
@@ -5346,7 +5346,7 @@ async def test_tsf_basic(dut):
     await tb.reset()
 
     # Wait for halt then check FP
-    await tb.run_until_halt(max_cycles=200)
+    await tb.run_until_halt(max_cycles=20000)
     fp_val = int(dut.dbg_fp.value)
     dut._log.info(f"TSF test: FP=0x{fp_val:02X}, expected=0xFF")
     assert fp_val == 0xFF, f"TSF failed: FP should be 0xFF, got 0x{fp_val:02X}"
@@ -5373,7 +5373,7 @@ async def test_tfs_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    await tb.run_until_halt(max_cycles=200)
+    await tb.run_until_halt(max_cycles=20000)
     sp_val = int(dut.dbg_sp.value)
     dut._log.info(f"TFS test: SP=0x{sp_val:02X}, expected=0xFF")
     assert sp_val == 0xFF, f"TFS failed: SP should be 0xFF, got 0x{sp_val:02X}"
@@ -5404,7 +5404,7 @@ async def test_push_fp_basic(dut):
     await tb.reset()
 
     expected = 0xFD  # FP value that was pushed
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"PUSH_FP test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"PUSH_FP failed"
@@ -5428,7 +5428,7 @@ async def test_pop_fp_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    await tb.run_until_halt(max_cycles=200)
+    await tb.run_until_halt(max_cycles=20000)
     fp_val = int(dut.dbg_fp.value)
     sp_val = int(dut.dbg_sp.value)
     dut._log.info(f"POP_FP test: FP=0x{fp_val:02X}, SP=0x{sp_val:02X}")
@@ -5464,7 +5464,7 @@ async def test_lda_fp_indexed(dut):
     await tb.reset()
 
     expected = DATA_VALUE
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"LDA addr,FP test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"LDA addr,FP failed"
@@ -5498,7 +5498,7 @@ async def test_sta_fp_indexed(dut):
     await tb.reset()
 
     expected = DATA_VALUE
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"STA addr,FP test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"STA addr,FP failed"
@@ -5553,7 +5553,7 @@ async def test_function_prologue_epilogue(dut):
     await tb.reset()
 
     expected = 0xBB  # FP should be restored to caller's value
-    result = await tb.wait_for_io_write(max_cycles=1000)
+    result = await tb.wait_for_io_write(max_cycles=10000)
 
     dut._log.info(f"Function prologue/epilogue test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Function prologue/epilogue failed: FP not restored"
@@ -5594,7 +5594,7 @@ async def test_fp_local_variable_access(dut):
     await tb.reset()
 
     expected = 0xAA  # First local variable
-    result = await tb.wait_for_io_write(max_cycles=500)
+    result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"FP local variable access test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"FP local variable access failed"
@@ -5643,7 +5643,7 @@ async def test_fp_parameter_access(dut):
     await tb.reset()
 
     expected = 0x55  # Parameter value
-    result = await tb.wait_for_io_write(max_cycles=1000)
+    result = await tb.wait_for_io_write(max_cycles=10000)
 
     dut._log.info(f"FP parameter access test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"FP parameter access failed"

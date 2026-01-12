@@ -6,12 +6,14 @@ module cpu_top (
     input  logic       clk,
     input  logic       reset,
 
-    // Interface com RAM
+    // Interface com RAM (SPI memory controller handshaking)
     output logic [7:0] mem_addr,
     output logic [7:0] mem_data_out,
     input  logic [7:0] mem_data_in,
     output logic       mem_write,
     output logic       mem_read,
+    output logic       mem_req,       // Memory access request (to SPI controller)
+    input  logic       mem_ready,     // Memory access complete (from SPI controller)
 
     // Interface com I/O
     input  logic [7:0] io_in,
@@ -126,8 +128,10 @@ module cpu_top (
         .flagN(flagN),
         .flagZ(flagZ),
         .flagC(flagC),             // Carry flag input (LCC extension)
+        .mem_ready(mem_ready),     // Memory access complete (from SPI controller)
         .mem_read(mem_read),
         .mem_write(mem_write),
+        .mem_req(mem_req),         // Memory access request (to SPI controller)
         .pc_inc(pc_inc),
         .pc_load(pc_load),
         .ac_load(ac_load),

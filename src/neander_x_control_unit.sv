@@ -79,9 +79,11 @@ module neander_control (
     input  logic       flagN,
     input  logic       flagZ,
     input  logic       flagC,       // Carry flag input (for JC/JNC)
+    input  logic       mem_ready,   // Memory access complete (from SPI controller)
 
     output logic       mem_read,
     output logic       mem_write,
+    output logic       mem_req,     // Memory access request (to SPI controller)
     output logic       pc_inc,
     output logic       pc_load,
     output logic       ac_load,
@@ -117,7 +119,7 @@ module neander_control (
 
     // Using ENUM for states (Easier to debug in Waveforms)
     typedef enum logic [7:0] {  // Extended to 8 bits for all extension states
-        S_FETCH_1, S_FETCH_2, S_FETCH_3, S_DECODE,
+        S_FETCH_1, S_FETCH_1B, S_FETCH_2, S_FETCH_3, S_DECODE,
         S_LDA_1, S_LDA_2, S_LDA_3, S_LDA_4,
         S_STA_1, S_STA_2, S_STA_3, S_STA_4,
         S_ADD_1, S_ADD_2, S_ADD_3, S_ADD_4,
@@ -208,6 +210,7 @@ module neander_control (
         // Defaults
         mem_read     = '0;
         mem_write    = '0;
+        mem_req      = '0;  // Memory request default (SPI handshaking)
         pc_inc       = '0;
         pc_load      = '0;
         ac_load      = '0;
@@ -244,16 +247,26 @@ module neander_control (
 
         case (state)
             // --- FETCH ---
+            // S_FETCH_1: Setup address (PC -> REM)
             S_FETCH_1: begin
                 addr_sel    = 2'b01; // PC -> REM
                 rem_load    = 1;
-                mem_read    = 1;
+                next_state  = S_FETCH_1B;  // Wait for REM to be stable
+            end
+            // S_FETCH_1B: REM is now stable with PC value
+            S_FETCH_1B: begin
                 next_state  = S_FETCH_2;
             end
+            // S_FETCH_2: Request memory read, wait for ready
             S_FETCH_2: begin
                 mem_read    = 1;
-                rdm_load    = 1;
-                next_state  = S_FETCH_3;
+                if (mem_ready) begin
+                    rdm_load    = 1;
+                    next_state  = S_FETCH_3;
+                end else begin
+                    mem_req     = 1;  // Only request when NOT ready (prevents double-fetch)
+                    next_state  = S_FETCH_2;  // Wait for SPI
+                end
             end
             S_FETCH_3: begin
                 ri_load     = 1;
@@ -377,122 +390,159 @@ module neander_control (
 
             // --- LDI ---
             S_LDI_1: begin
-                addr_sel = 2'b01;
+                addr_sel    = 2'b01;
                 rem_load    = 1;
-                mem_read    = 1;
                 next_state  = S_LDI_2;
             end
             S_LDI_2: begin
                 mem_read    = 1;
-                ac_load     = 1;
-                nz_load     = 1;
-                pc_inc      = 1;
-                next_state  = S_FETCH_1;
+                if (mem_ready) begin
+                    ac_load     = 1;
+                    nz_load     = 1;
+                    pc_inc      = 1;
+                    next_state  = S_FETCH_1;
+                end else begin
+                    mem_req     = 1;
+                    next_state  = S_LDI_2;  // Wait for SPI
+                end
             end
 
             // --- LDA ---
             S_LDA_1: begin
-                addr_sel = 2'b01;
+                addr_sel    = 2'b01;
                 rem_load    = 1;
-                mem_read    = 1;
                 next_state  = S_LDA_2;
             end
             S_LDA_2: begin
                 mem_read    = 1;
-                rdm_load    = 1;
-                pc_inc      = 1;
-                next_state  = S_LDA_3;
+                if (mem_ready) begin
+                    rdm_load    = 1;
+                    pc_inc      = 1;
+                    next_state  = S_LDA_3;
+                end else begin
+                    mem_req     = 1;
+                    next_state  = S_LDA_2;  // Wait for SPI
+                end
             end
             S_LDA_3: begin
-                addr_sel = 2'b00; // RDM -> REM
+                addr_sel    = 2'b00; // RDM -> REM
                 rem_load    = 1;
-                mem_read    = 1;
                 next_state  = S_LDA_4;
             end
             S_LDA_4: begin
                 mem_read    = 1;
-                ac_load     = 1;
-                nz_load     = 1;
-                next_state  = S_FETCH_1;
+                if (mem_ready) begin
+                    ac_load     = 1;
+                    nz_load     = 1;
+                    next_state  = S_FETCH_1;
+                end else begin
+                    mem_req     = 1;
+                    next_state  = S_LDA_4;  // Wait for SPI
+                end
             end
 
             // --- STA ---
             S_STA_1: begin
-                addr_sel = 2'b01;
+                addr_sel    = 2'b01;
                 rem_load    = 1;
-                mem_read    = 1;
                 next_state  = S_STA_2;
             end
             S_STA_2: begin
                 mem_read    = 1;
-                rdm_load    = 1;
-                pc_inc      = 1;
-                next_state  = S_STA_3;
+                if (mem_ready) begin
+                    rdm_load    = 1;
+                    pc_inc      = 1;
+                    next_state  = S_STA_3;
+                end else begin
+                    mem_req     = 1;
+                    next_state  = S_STA_2;  // Wait for SPI
+                end
             end
             S_STA_3: begin
-                addr_sel = 2'b00;
+                addr_sel    = 2'b00;
                 rem_load    = 1;
                 next_state  = S_STA_4;
             end
             S_STA_4: begin
                 mem_write   = 1;
-                next_state  = S_FETCH_1;
+                if (mem_ready) begin
+                    next_state  = S_FETCH_1;
+                end else begin
+                    mem_req     = 1;
+                    next_state  = S_STA_4;  // Wait for SPI
+                end
             end
 
             // --- ADD ---
             S_ADD_1: begin
-                addr_sel = 2'b01;
+                addr_sel    = 2'b01;
                 rem_load    = 1;
-                mem_read    = 1;
                 next_state  = S_ADD_2;
             end
             S_ADD_2: begin
                 mem_read    = 1;
-                rdm_load    = 1;
-                pc_inc      = 1;
-                next_state  = S_ADD_3;
+                if (mem_ready) begin
+                    rdm_load    = 1;
+                    pc_inc      = 1;
+                    next_state  = S_ADD_3;
+                end else begin
+                    mem_req     = 1;
+                    next_state  = S_ADD_2;  // Wait for SPI
+                end
             end
             S_ADD_3: begin
-                addr_sel = 2'b00;
+                addr_sel    = 2'b00;
                 rem_load    = 1;
-                mem_read    = 1;
                 next_state  = S_ADD_4;
             end
             S_ADD_4: begin
                 mem_read    = 1;
-                ac_load     = 1;
-                alu_op      = 4'b0000;  // ADD
-                nz_load     = 1;
-                c_load      = 1;        // Update carry flag
-                next_state  = S_FETCH_1;
+                if (mem_ready) begin
+                    ac_load     = 1;
+                    alu_op      = 4'b0000;  // ADD
+                    nz_load     = 1;
+                    c_load      = 1;        // Update carry flag
+                    next_state  = S_FETCH_1;
+                end else begin
+                    mem_req     = 1;
+                    next_state  = S_ADD_4;  // Wait for SPI
+                end
             end
 
             // --- AND ---
             S_AND_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_AND_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_AND_2;
             end
             S_AND_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_AND_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_AND_3; end
+                else begin mem_req = 1; next_state = S_AND_2; end
             end
             S_AND_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_AND_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_AND_4;
             end
             S_AND_4: begin
-                mem_read = 1; ac_load = 1; alu_op = 4'b0010; nz_load = 1; next_state = S_FETCH_1;  // AND
+                mem_read = 1;
+                if (mem_ready) begin ac_load = 1; alu_op = 4'b0010; nz_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_AND_4; end
             end
 
             // --- OR ---
             S_OR_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_OR_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_OR_2;
             end
             S_OR_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_OR_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_OR_3; end
+                else begin mem_req = 1; next_state = S_OR_2; end
             end
             S_OR_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_OR_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_OR_4;
             end
             S_OR_4: begin
-                mem_read = 1; ac_load = 1; alu_op = 4'b0011; nz_load = 1; next_state = S_FETCH_1;  // OR
+                mem_read = 1;
+                if (mem_ready) begin ac_load = 1; alu_op = 4'b0011; nz_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_OR_4; end
             end
 
             // --- NOT ---
@@ -502,10 +552,12 @@ module neander_control (
 
             // --- JMP ---
             S_JMP_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JMP_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JMP_2;
             end
             S_JMP_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JMP_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JMP_3; end
+                else begin mem_req = 1; next_state = S_JMP_2; end
             end
             S_JMP_3: begin
                 pc_load = 1; next_state = S_FETCH_1;
@@ -513,10 +565,12 @@ module neander_control (
 
             // --- JN ---
             S_JN_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JN_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JN_2;
             end
             S_JN_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JN_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JN_3; end
+                else begin mem_req = 1; next_state = S_JN_2; end
             end
             S_JN_3: begin
                 if (flagN) pc_load = 1;
@@ -526,10 +580,12 @@ module neander_control (
 
             // --- JZ ---
             S_JZ_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JZ_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JZ_2;
             end
             S_JZ_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JZ_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JZ_3; end
+                else begin mem_req = 1; next_state = S_JZ_2; end
             end
             S_JZ_3: begin
                 if (flagZ) pc_load = 1;
@@ -539,10 +595,12 @@ module neander_control (
 
             // --- JNZ ---
             S_JNZ_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JNZ_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JNZ_2;
             end
             S_JNZ_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JNZ_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JNZ_3; end
+                else begin mem_req = 1; next_state = S_JNZ_2; end
             end
             S_JNZ_3: begin
                 if (!flagZ) pc_load = 1;
@@ -552,10 +610,12 @@ module neander_control (
 
             // --- IN ---
             S_IN_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_IN_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_IN_2;
             end
             S_IN_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_IN_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_IN_3; end
+                else begin mem_req = 1; next_state = S_IN_2; end
             end
             S_IN_3: begin
                 ac_load = 1; nz_load = 1; next_state = S_FETCH_1;
@@ -563,10 +623,12 @@ module neander_control (
 
             // --- OUT ---
             S_OUT_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_OUT_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_OUT_2;
             end
             S_OUT_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_OUT_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_OUT_3; end
+                else begin mem_req = 1; next_state = S_OUT_2; end
             end
             S_OUT_3: begin
                 io_write = 1; next_state = S_FETCH_1;
@@ -584,8 +646,9 @@ module neander_control (
                 next_state = S_PUSH_3;
             end
             S_PUSH_3: begin
-                mem_write = 1;     // Write AC to memory at [REM]
-                next_state = S_FETCH_1;
+                mem_write = 1;
+                if (mem_ready) begin next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_PUSH_3; end
             end
 
             // --- POP (0x71) ---
@@ -596,15 +659,20 @@ module neander_control (
                 next_state = S_POP_2;
             end
             S_POP_2: begin
-                mem_read = 1;      // Read memory at [REM]
+                mem_read = 1; mem_req = 1;
                 next_state = S_POP_3;
             end
             S_POP_3: begin
                 mem_read = 1;
-                ac_load = 1;       // Load data into AC
-                nz_load = 1;       // Update flags
-                sp_inc = 1;        // Increment SP (point to next stack item)
-                next_state = S_FETCH_1;
+                if (mem_ready) begin
+                    ac_load = 1;       // Load data into AC
+                    nz_load = 1;       // Update flags
+                    sp_inc = 1;        // Increment SP (point to next stack item)
+                    next_state = S_FETCH_1;
+                end else begin
+                    mem_req = 1;
+                    next_state = S_POP_3;
+                end
             end
 
             // --- CALL (0x72 addr) ---
@@ -612,14 +680,18 @@ module neander_control (
             S_CALL_1: begin
                 addr_sel = 2'b01;  // PC -> REM (fetch target address)
                 rem_load = 1;
-                mem_read = 1;
                 next_state = S_CALL_2;
             end
             S_CALL_2: begin
                 mem_read = 1;
-                rdm_load = 1;      // Load target address to RDM
-                pc_inc = 1;        // PC now points to instruction after CALL (return address)
-                next_state = S_CALL_3;
+                if (mem_ready) begin
+                    rdm_load = 1;      // Load target address to RDM
+                    pc_inc = 1;        // PC now points to instruction after CALL (return address)
+                    next_state = S_CALL_3;
+                end else begin
+                    mem_req = 1;
+                    next_state = S_CALL_2;
+                end
             end
             S_CALL_3: begin
                 sp_dec = 1;        // Decrement SP (make room for return address)
@@ -631,10 +703,15 @@ module neander_control (
                 next_state = S_CALL_5;
             end
             S_CALL_5: begin
-                mem_write = 1;     // Write return address (PC) to [SP]
+                mem_write = 1;
                 mem_data_sel_ext = 3'b001;  // Select PC as data source
-                pc_load = 1;       // Load target address from RDM to PC
-                next_state = S_FETCH_1;
+                if (mem_ready) begin
+                    pc_load = 1;       // Load target address from RDM to PC
+                    next_state = S_FETCH_1;
+                end else begin
+                    mem_req = 1;
+                    next_state = S_CALL_5;
+                end
             end
 
             // --- RET (0x73) ---
@@ -646,8 +723,13 @@ module neander_control (
             end
             S_RET_2: begin
                 mem_read = 1;
-                rdm_load = 1;      // Load return address to RDM
-                next_state = S_RET_3;
+                if (mem_ready) begin
+                    rdm_load = 1;      // Load return address to RDM
+                    next_state = S_RET_3;
+                end else begin
+                    mem_req = 1;
+                    next_state = S_RET_2;
+                end
             end
             S_RET_3: begin
                 pc_load = 1;       // Load return address from RDM to PC
@@ -662,16 +744,20 @@ module neander_control (
             // --- SUB addr (0x74) ---
             // Subtract memory from AC: AC = AC - MEM[addr]
             S_SUB_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_SUB_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_SUB_2;
             end
             S_SUB_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_SUB_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_SUB_3; end
+                else begin mem_req = 1; next_state = S_SUB_2; end
             end
             S_SUB_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_SUB_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_SUB_4;
             end
             S_SUB_4: begin
-                mem_read = 1; ac_load = 1; alu_op = 4'b0001; nz_load = 1; c_load = 1; next_state = S_FETCH_1;  // SUB with carry
+                mem_read = 1;
+                if (mem_ready) begin ac_load = 1; alu_op = 4'b0001; nz_load = 1; c_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_SUB_4; end
             end
 
             // --- INC (0x75) ---
@@ -697,16 +783,20 @@ module neander_control (
             // --- XOR addr (0x77) ---
             // XOR memory with AC: AC = AC ^ MEM[addr]
             S_XOR_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_XOR_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_XOR_2;
             end
             S_XOR_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_XOR_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_XOR_3; end
+                else begin mem_req = 1; next_state = S_XOR_2; end
             end
             S_XOR_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_XOR_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_XOR_4;
             end
             S_XOR_4: begin
-                mem_read = 1; ac_load = 1; alu_op = 4'b0100; nz_load = 1; next_state = S_FETCH_1;  // XOR
+                mem_read = 1;
+                if (mem_ready) begin ac_load = 1; alu_op = 4'b0100; nz_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_XOR_4; end
             end
 
             // --- SHL (0x78) ---
@@ -734,27 +824,31 @@ module neander_control (
             // --- LDX addr (0x7A) ---
             // Load X from memory: X = MEM[addr]
             S_LDX_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDX_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_LDX_2;
             end
             S_LDX_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDX_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_LDX_3; end
+                else begin mem_req = 1; next_state = S_LDX_2; end
             end
             S_LDX_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDX_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_LDX_4;
             end
             S_LDX_4: begin
                 mem_read = 1;
-                x_load = 1;        // Load X from memory
-                next_state = S_FETCH_1;
+                if (mem_ready) begin x_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_LDX_4; end
             end
 
             // --- STX addr (0x7B) ---
             // Store X to memory: MEM[addr] = X
             S_STX_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STX_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_STX_2;
             end
             S_STX_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STX_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_STX_3; end
+                else begin mem_req = 1; next_state = S_STX_2; end
             end
             S_STX_3: begin
                 addr_sel = 2'b00; rem_load = 1; next_state = S_STX_4;
@@ -762,19 +856,19 @@ module neander_control (
             S_STX_4: begin
                 mem_write = 1;
                 mem_data_sel_ext = 3'b010;  // Select X as data source
-                next_state = S_FETCH_1;
+                if (mem_ready) begin next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_STX_4; end
             end
 
             // --- LDXI imm (0x7C) ---
             // Load X with immediate: X = imm
             S_LDXI_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDXI_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_LDXI_2;
             end
             S_LDXI_2: begin
                 mem_read = 1;
-                x_load = 1;        // Load X from immediate (mem_data_in)
-                pc_inc = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin x_load = 1; pc_inc = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_LDXI_2; end
             end
 
             // --- TAX (0x7D) ---
@@ -807,29 +901,32 @@ module neander_control (
             // --- LDA addr,X (0x21) ---
             // Load AC from memory with indexed addressing: AC = MEM[addr + X]
             S_LDA_X_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDA_X_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_LDA_X_2;
             end
             S_LDA_X_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDA_X_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_LDA_X_3; end
+                else begin mem_req = 1; next_state = S_LDA_X_2; end
             end
             S_LDA_X_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDA_X_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_LDA_X_4;
             end
             S_LDA_X_4: begin
                 mem_read = 1;
                 indexed_mode = 1;  // Use addr + X for memory access
-                ac_load = 1;
-                nz_load = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin ac_load = 1; nz_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_LDA_X_4; end
             end
 
             // --- STA addr,X (0x11) ---
             // Store AC to memory with indexed addressing: MEM[addr + X] = AC
             S_STA_X_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STA_X_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_STA_X_2;
             end
             S_STA_X_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STA_X_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_STA_X_3; end
+                else begin mem_req = 1; next_state = S_STA_X_2; end
             end
             S_STA_X_3: begin
                 addr_sel = 2'b00; rem_load = 1; next_state = S_STA_X_4;
@@ -837,7 +934,8 @@ module neander_control (
             S_STA_X_4: begin
                 indexed_mode = 1;  // Use addr + X for memory access
                 mem_write = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_STA_X_4; end
             end
 
             // ================================================================
@@ -858,30 +956,33 @@ module neander_control (
             // Compare AC with memory: set flags N, Z, C based on (AC - MEM[addr])
             // Does NOT modify AC, only sets flags
             S_CMP_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_CMP_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_CMP_2;
             end
             S_CMP_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_CMP_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_CMP_3; end
+                else begin mem_req = 1; next_state = S_CMP_2; end
             end
             S_CMP_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_CMP_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_CMP_4;
             end
             S_CMP_4: begin
                 mem_read = 1;
                 // Do NOT load AC - only set flags
                 alu_op = 4'b0001;  // SUB (for comparison)
-                nz_load = 1;       // Update N and Z flags
-                c_load = 1;        // Update C flag (borrow)
-                next_state = S_FETCH_1;
+                if (mem_ready) begin nz_load = 1; c_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_CMP_4; end
             end
 
             // --- JC addr (0x81) ---
             // Jump if Carry flag is set
             S_JC_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JC_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JC_2;
             end
             S_JC_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JC_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JC_3; end
+                else begin mem_req = 1; next_state = S_JC_2; end
             end
             S_JC_3: begin
                 if (flagC) pc_load = 1;
@@ -892,10 +993,12 @@ module neander_control (
             // --- JNC addr (0x82) ---
             // Jump if Carry flag is clear (No Carry)
             S_JNC_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JNC_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JNC_2;
             end
             S_JNC_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JNC_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JNC_3; end
+                else begin mem_req = 1; next_state = S_JNC_2; end
             end
             S_JNC_3: begin
                 if (!flagC) pc_load = 1;
@@ -910,10 +1013,12 @@ module neander_control (
             // --- JLE addr (0x83) ---
             // Jump if Less or Equal (signed): N=1 OR Z=1
             S_JLE_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JLE_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JLE_2;
             end
             S_JLE_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JLE_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JLE_3; end
+                else begin mem_req = 1; next_state = S_JLE_2; end
             end
             S_JLE_3: begin
                 if (flagN || flagZ) pc_load = 1;
@@ -924,10 +1029,12 @@ module neander_control (
             // --- JGT addr (0x84) ---
             // Jump if Greater Than (signed): N=0 AND Z=0
             S_JGT_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JGT_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JGT_2;
             end
             S_JGT_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JGT_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JGT_3; end
+                else begin mem_req = 1; next_state = S_JGT_2; end
             end
             S_JGT_3: begin
                 if (!flagN && !flagZ) pc_load = 1;
@@ -938,10 +1045,12 @@ module neander_control (
             // --- JGE addr (0x85) ---
             // Jump if Greater or Equal (signed): N=0
             S_JGE_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JGE_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JGE_2;
             end
             S_JGE_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JGE_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JGE_3; end
+                else begin mem_req = 1; next_state = S_JGE_2; end
             end
             S_JGE_3: begin
                 if (!flagN) pc_load = 1;
@@ -956,10 +1065,12 @@ module neander_control (
             // --- JBE addr (0x86) ---
             // Jump if Below or Equal (unsigned): C=1 OR Z=1
             S_JBE_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JBE_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JBE_2;
             end
             S_JBE_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JBE_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JBE_3; end
+                else begin mem_req = 1; next_state = S_JBE_2; end
             end
             S_JBE_3: begin
                 if (flagC || flagZ) pc_load = 1;
@@ -970,10 +1081,12 @@ module neander_control (
             // --- JA addr (0x87) ---
             // Jump if Above (unsigned): C=0 AND Z=0
             S_JA_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_JA_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_JA_2;
             end
             S_JA_2: begin
-                mem_read = 1; rdm_load = 1; next_state = S_JA_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; next_state = S_JA_3; end
+                else begin mem_req = 1; next_state = S_JA_2; end
             end
             S_JA_3: begin
                 if (!flagC && !flagZ) pc_load = 1;
@@ -988,27 +1101,31 @@ module neander_control (
             // --- LDY addr (0x07) ---
             // Load Y from memory: Y = MEM[addr]
             S_LDY_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDY_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_LDY_2;
             end
             S_LDY_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDY_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_LDY_3; end
+                else begin mem_req = 1; next_state = S_LDY_2; end
             end
             S_LDY_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDY_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_LDY_4;
             end
             S_LDY_4: begin
                 mem_read = 1;
-                y_load = 1;        // Load Y from memory
-                next_state = S_FETCH_1;
+                if (mem_ready) begin y_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_LDY_4; end
             end
 
             // --- STY addr (0x08) ---
             // Store Y to memory: MEM[addr] = Y
             S_STY_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STY_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_STY_2;
             end
             S_STY_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STY_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_STY_3; end
+                else begin mem_req = 1; next_state = S_STY_2; end
             end
             S_STY_3: begin
                 addr_sel = 2'b00; rem_load = 1; next_state = S_STY_4;
@@ -1016,19 +1133,19 @@ module neander_control (
             S_STY_4: begin
                 mem_write = 1;
                 mem_data_sel_ext = 3'b011;  // Select Y as data source
-                next_state = S_FETCH_1;
+                if (mem_ready) begin next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_STY_4; end
             end
 
             // --- LDYI imm (0x06) ---
             // Load Y with immediate: Y = imm
             S_LDYI_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDYI_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_LDYI_2;
             end
             S_LDYI_2: begin
                 mem_read = 1;
-                y_load = 1;        // Load Y from immediate (mem_data_in)
-                pc_inc = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin y_load = 1; pc_inc = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_LDYI_2; end
             end
 
             // --- TAY (0x03) ---
@@ -1061,29 +1178,32 @@ module neander_control (
             // --- LDA addr,Y (0x22) ---
             // Load AC from memory with indexed addressing: AC = MEM[addr + Y]
             S_LDA_Y_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDA_Y_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_LDA_Y_2;
             end
             S_LDA_Y_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDA_Y_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_LDA_Y_3; end
+                else begin mem_req = 1; next_state = S_LDA_Y_2; end
             end
             S_LDA_Y_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDA_Y_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_LDA_Y_4;
             end
             S_LDA_Y_4: begin
                 mem_read = 1;
                 indexed_mode_y = 1;  // Use addr + Y for memory access
-                ac_load = 1;
-                nz_load = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin ac_load = 1; nz_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_LDA_Y_4; end
             end
 
             // --- STA addr,Y (0x12) ---
             // Store AC to memory with indexed addressing: MEM[addr + Y] = AC
             S_STA_Y_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STA_Y_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_STA_Y_2;
             end
             S_STA_Y_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STA_Y_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_STA_Y_3; end
+                else begin mem_req = 1; next_state = S_STA_Y_2; end
             end
             S_STA_Y_3: begin
                 addr_sel = 2'b00; rem_load = 1; next_state = S_STA_Y_4;
@@ -1091,7 +1211,8 @@ module neander_control (
             S_STA_Y_4: begin
                 indexed_mode_y = 1;  // Use addr + Y for memory access
                 mem_write = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_STA_Y_4; end
             end
 
             // ================================================================
@@ -1151,42 +1272,42 @@ module neander_control (
             // Add with Carry: AC = AC + MEM[addr] + Carry
             // Essential for multi-byte (16-bit, 32-bit) addition
             S_ADC_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_ADC_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_ADC_2;
             end
             S_ADC_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_ADC_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_ADC_3; end
+                else begin mem_req = 1; next_state = S_ADC_2; end
             end
             S_ADC_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_ADC_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_ADC_4;
             end
             S_ADC_4: begin
                 mem_read = 1;
-                ac_load = 1;
                 alu_op = 4'b1100;  // ADC operation
-                nz_load = 1;
-                c_load = 1;        // Update carry flag for chained operations
-                next_state = S_FETCH_1;
+                if (mem_ready) begin ac_load = 1; nz_load = 1; c_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_ADC_4; end
             end
 
             // --- SBC addr (0x51) ---
             // Subtract with Borrow: AC = AC - MEM[addr] - Carry
             // Essential for multi-byte (16-bit, 32-bit) subtraction
             S_SBC_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_SBC_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_SBC_2;
             end
             S_SBC_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_SBC_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_SBC_3; end
+                else begin mem_req = 1; next_state = S_SBC_2; end
             end
             S_SBC_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_SBC_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_SBC_4;
             end
             S_SBC_4: begin
                 mem_read = 1;
-                ac_load = 1;
                 alu_op = 4'b1101;  // SBC operation
-                nz_load = 1;
-                c_load = 1;        // Update carry/borrow flag for chained operations
-                next_state = S_FETCH_1;
+                if (mem_ready) begin ac_load = 1; nz_load = 1; c_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_SBC_4; end
             end
 
             // --- ASR (0x61) ---
@@ -1232,7 +1353,8 @@ module neander_control (
             S_PUSH_FP_3: begin
                 mem_write = 1;
                 mem_data_sel_ext = 3'b100;  // Select FP as data source
-                next_state = S_FETCH_1;
+                if (mem_ready) begin next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_PUSH_FP_3; end
             end
 
             // --- POP_FP (0x0D) ---
@@ -1243,14 +1365,19 @@ module neander_control (
                 next_state = S_POP_FP_2;
             end
             S_POP_FP_2: begin
-                mem_read = 1;      // Read memory at [REM]
+                mem_read = 1; mem_req = 1;
                 next_state = S_POP_FP_3;
             end
             S_POP_FP_3: begin
                 mem_read = 1;
-                fp_load = 1;       // Load FP from memory
-                sp_inc = 1;        // Increment SP (pop)
-                next_state = S_FETCH_1;
+                if (mem_ready) begin
+                    fp_load = 1;       // Load FP from memory
+                    sp_inc = 1;        // Increment SP (pop)
+                    next_state = S_FETCH_1;
+                end else begin
+                    mem_req = 1;
+                    next_state = S_POP_FP_3;
+                end
             end
 
             // ================================================================
@@ -1260,29 +1387,32 @@ module neander_control (
             // --- LDA addr,FP (0x24) ---
             // Load AC from memory with FP-indexed addressing: AC = MEM[addr + FP]
             S_LDA_FP_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_LDA_FP_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_LDA_FP_2;
             end
             S_LDA_FP_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_LDA_FP_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_LDA_FP_3; end
+                else begin mem_req = 1; next_state = S_LDA_FP_2; end
             end
             S_LDA_FP_3: begin
-                addr_sel = 2'b00; rem_load = 1; mem_read = 1; next_state = S_LDA_FP_4;
+                addr_sel = 2'b00; rem_load = 1; next_state = S_LDA_FP_4;
             end
             S_LDA_FP_4: begin
                 mem_read = 1;
                 indexed_mode_fp = 1;  // Use addr + FP for memory access
-                ac_load = 1;
-                nz_load = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin ac_load = 1; nz_load = 1; next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_LDA_FP_4; end
             end
 
             // --- STA addr,FP (0x14) ---
             // Store AC to memory with FP-indexed addressing: MEM[addr + FP] = AC
             S_STA_FP_1: begin
-                addr_sel = 2'b01; rem_load = 1; mem_read = 1; next_state = S_STA_FP_2;
+                addr_sel = 2'b01; rem_load = 1; next_state = S_STA_FP_2;
             end
             S_STA_FP_2: begin
-                mem_read = 1; rdm_load = 1; pc_inc = 1; next_state = S_STA_FP_3;
+                mem_read = 1;
+                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_STA_FP_3; end
+                else begin mem_req = 1; next_state = S_STA_FP_2; end
             end
             S_STA_FP_3: begin
                 addr_sel = 2'b00; rem_load = 1; next_state = S_STA_FP_4;
@@ -1290,7 +1420,8 @@ module neander_control (
             S_STA_FP_4: begin
                 indexed_mode_fp = 1;  // Use addr + FP for memory access
                 mem_write = 1;
-                next_state = S_FETCH_1;
+                if (mem_ready) begin next_state = S_FETCH_1; end
+                else begin mem_req = 1; next_state = S_STA_FP_4; end
             end
 
             // --- HLT ---
