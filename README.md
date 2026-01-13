@@ -8,21 +8,23 @@ A SystemVerilog implementation of the NEANDER-X educational 8-bit processor for 
 
 NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://www.inf.ufrgs.br/arq/wiki/doku.php?id=neander) (Universidade Federal do Rio Grande do Sul) for teaching fundamental computer architecture concepts in Brazil. This implementation (NEANDER-X) extends the original NEANDER with:
 
+- **16-bit Addressing**: Full 64KB address space via SPI SRAM
 - **I/O Instructions**: IN/OUT for external communication
 - **Immediate Addressing**: LDI for loading constants
-- **Stack Operations**: PUSH/POP/CALL/RET for subroutines
+- **Stack Operations**: PUSH/POP/CALL/RET for subroutines (16-bit return addresses)
 - **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR, ASR, NEG, CMP, ADC, SBC for C compiler support
 - **X Register**: Index register with LDX, STX, LDXI, TAX, TXA, INX
 - **Y Register**: Second index register with LDY, STY, LDYI, TAY, TYA, INY
-- **Frame Pointer**: FP register with TSF, TFS, PUSH_FP, POP_FP for stack frame management
+- **Frame Pointer**: FP register (16-bit) with TSF, TFS, PUSH_FP, POP_FP for stack frame management
 - **Indexed Addressing**: LDA/STA with ,X, ,Y, and ,FP modes for array/pointer/local variable access
 - **Hardware Multiplication**: MUL instruction (AC * X -> Y:AC) with 16-bit result
 - **Hardware Division**: DIV and MOD instructions for integer division and modulo operations
 
 ### Key Features
 
-- 8-bit data width and address space
+- 8-bit data width with **16-bit address space (64KB)**
 - Single accumulator architecture with X, Y, and FP registers
+- **16-bit registers**: PC, SP, FP, REM, RDM for full address range
 - Three condition flags (N: Negative, Z: Zero, C: Carry)
 - 60+ instructions including:
   - Stack operations (PUSH/POP/CALL/RET)
@@ -36,8 +38,8 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
   - Hardware multiplication (MUL: AC * X -> Y:AC, 16-bit result)
   - Hardware division (DIV, MOD: AC / X with quotient and remainder)
   - Multi-byte arithmetic support (ADC, SBC for 16/32-bit operations)
-- FSM-based control unit
-- SPI memory interface (256 bytes via external SPI SRAM, only 4 pins)
+- FSM-based control unit (~90 states for 16-bit address handling)
+- SPI memory interface (64KB via external SPI SRAM, only 4 pins)
 
 ## Instruction Set
 
@@ -277,6 +279,39 @@ func:   PUSH_FP         ; Save caller's FP
     SHR             ; AC = 0x7C = 124 (sign NOT preserved)
 ```
 
+### Instruction Encoding (16-bit Addressing)
+
+With 16-bit addressing, instructions that reference memory use a **3-byte format** (little-endian):
+
+```
+[opcode] [addr_lo] [addr_hi]
+```
+
+| Instruction Type | Format | Bytes | Example |
+|-----------------|--------|-------|---------|
+| Memory operations | `[opcode] [addr_lo] [addr_hi]` | 3 | `LDA 0x1234` → `0x20 0x34 0x12` |
+| Immediate | `[opcode] [imm]` | 2 | `LDI 0x42` → `0xE0 0x42` |
+| Single-byte | `[opcode]` | 1 | `NOT` → `0x60` |
+| I/O operations | `[opcode] [port]` | 2 | `OUT 0` → `0xD0 0x00` |
+
+**Instructions with 3-byte format (16-bit address):**
+- All memory operations: LDA, STA, ADD, SUB, AND, OR, XOR, CMP, ADC, SBC
+- All indexed operations: LDA/STA with ,X, ,Y, ,FP
+- Register loads/stores: LDX, STX, LDY, STY
+- All jumps: JMP, JN, JZ, JNZ, JC, JNC, JLE, JGT, JGE, JBE, JA
+- Subroutine call: CALL
+
+**Instructions with 2-byte format (immediate or port):**
+- Immediate loads: LDI, LDXI, LDYI
+- I/O operations: IN, OUT
+
+**Instructions with 1-byte format:**
+- Register operations: NOT, INC, DEC, SHL, SHR, ASR, NEG
+- Transfers: TAX, TXA, INX, TAY, TYA, INY, TSF, TFS
+- Stack (data): PUSH, POP, PUSH_FP, POP_FP
+- Arithmetic: MUL, DIV, MOD
+- Control: NOP, HLT, RET
+
 ## System Architecture
 
 The design is split between **synthesized logic** (on the TinyTapeout ASIC) and **external hardware** (SPI SRAM chip you provide).
@@ -286,19 +321,19 @@ graph TB
     subgraph ASIC["TinyTapeout ASIC (Synthesized)"]
         subgraph CPU["Neander-X CPU"]
             ALU["ALU<br/>+, -, *, /, AND, OR, XOR"]
-            DP["Datapath<br/>PC, AC, SP, FP, X, Y"]
-            CU["Control Unit<br/>FSM"]
+            DP["Datapath<br/>PC(16), SP(16), FP(16)<br/>AC(8), X(8), Y(8)"]
+            CU["Control Unit<br/>FSM (~90 states)"]
         end
         SPI["SPI Memory Controller<br/>(parallel ↔ serial)"]
     end
 
     subgraph EXT["External Hardware (You Provide)"]
-        SRAM[("SPI SRAM<br/>23LC512<br/>256 bytes")]
+        SRAM[("SPI SRAM<br/>23LC512<br/>64KB")]
         IO_IN["Switches/Keyboard<br/>(7-bit input)"]
         IO_OUT["LEDs/Display<br/>(via latch)"]
     end
 
-    CPU <-->|"parallel bus<br/>addr[7:0], data[7:0]<br/>req, ready"| SPI
+    CPU <-->|"parallel bus<br/>addr[15:0], data[7:0]<br/>req, ready"| SPI
     SPI <-->|"4-wire SPI<br/>CS, SCLK, MOSI, MISO"| SRAM
     IO_IN -->|"ui_in[7:1]"| CPU
     CPU -->|"IO_WRITE strobe"| IO_OUT
@@ -323,27 +358,27 @@ The **SPI Memory Controller** converts parallel CPU memory requests into serial 
 ```mermaid
 graph TB
     subgraph Control Unit
-        FSM[FSM<br/>Control]
+        FSM[FSM<br/>Control ~90 states]
     end
 
     subgraph Datapath
-        PC[PC<br/>Program Counter]
-        SP[SP<br/>Stack Pointer]
-        FP[FP<br/>Frame Pointer]
-        X[X<br/>Index Register]
-        Y[Y<br/>Index Register]
-        RI[RI<br/>Instruction Reg]
-        REM[REM<br/>Address Reg]
-        RDM[RDM<br/>Data Reg]
-        AC[AC<br/>Accumulator]
+        PC[PC<br/>Program Counter<br/>16-bit]
+        SP[SP<br/>Stack Pointer<br/>16-bit]
+        FP[FP<br/>Frame Pointer<br/>16-bit]
+        X[X<br/>Index Register<br/>8-bit]
+        Y[Y<br/>Index Register<br/>8-bit]
+        RI[RI<br/>Instruction Reg<br/>8-bit]
+        REM[REM<br/>Address Reg<br/>16-bit]
+        RDM[RDM<br/>Data Reg<br/>16-bit]
+        AC[AC<br/>Accumulator<br/>8-bit]
         ALU[ALU<br/>+ - * & OR ^ ~ << >>]
         NZC[N Z C<br/>Flags]
-        MUX[Address MUX<br/>PC/RDM/SP]
-        IDX[Indexed Addr<br/>REM + X/Y/FP]
+        MUX[Address MUX<br/>PC/RDM/SP<br/>16-bit]
+        IDX[Indexed Addr<br/>REM + X/Y/FP<br/>16-bit result]
     end
 
     subgraph External
-        RAM[(External<br/>RAM)]
+        RAM[(External<br/>SPI SRAM<br/>64KB)]
         IO_IN[IO Input]
         IO_OUT[IO Output]
     end
@@ -360,8 +395,8 @@ graph TB
     X --> IDX
     Y --> IDX
     FP --> IDX
-    IDX -->|address| RAM
-    RAM -->|data| RDM
+    IDX -->|16-bit address| RAM
+    RAM -->|8-bit data| RDM
     RDM --> RI
     AC --> ALU
     X --> ALU
@@ -389,26 +424,44 @@ graph TB
 tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
 ├── cpu_top (top_cpu_neander_x.sv)
 │   ├── neander_datapath (neander_x_datapath.sv)
-│   │   ├── pc_reg (Program Counter, 8-bit)
-│   │   ├── sp_reg (Stack Pointer, 8-bit)
-│   │   ├── fp_reg (Frame Pointer, 8-bit)
-│   │   ├── x_reg (X Index Register)
-│   │   ├── y_reg (Y Index Register)
-│   │   ├── mux_addr (3-way Address MUX)
-│   │   ├── generic_reg (REM, RDM, RI, AC)
+│   │   ├── pc_reg (Program Counter, 16-bit)
+│   │   ├── sp_reg (Stack Pointer, 16-bit, reset=0x00FF)
+│   │   ├── fp_reg (Frame Pointer, 16-bit)
+│   │   ├── rdm_reg (Data Register, 16-bit, separate lo/hi loading)
+│   │   ├── x_reg (X Index Register, 8-bit)
+│   │   ├── y_reg (Y Index Register, 8-bit)
+│   │   ├── mux_addr (3-way Address MUX, 16-bit)
+│   │   ├── generic_reg (RI, AC - 8-bit)
+│   │   ├── generic_reg_16 (REM - 16-bit)
 │   │   ├── neander_alu (ADD, ADC, SUB, SBC, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, ASR, NEG)
 │   │   └── nzc_reg (N, Z, C Flags)
-│   └── neander_control (neander_x_control_unit.sv - FSM ~90 states)
+│   └── neander_control (neander_x_control_unit.sv - FSM ~90 states, 9-bit state encoding)
 │
 └── spi_memory_controller (spi_memory_controller.sv)
     ├── SPI Master interface (directly to external SRAM)
+    ├── 16-bit address support (addr[15:0])
     ├── 8-state FSM (IDLE → CMD → ADDR_HI → ADDR_LO → DATA → DONE)
     └── ~70 CPU cycles per memory access
 ```
 
+### Register Summary
+
+| Register | Width | Description |
+|----------|-------|-------------|
+| PC | 16-bit | Program Counter (0x0000-0xFFFF) |
+| SP | 16-bit | Stack Pointer (reset: 0x00FF, grows downward) |
+| FP | 16-bit | Frame Pointer (for local variable access) |
+| REM | 16-bit | Memory Address Register |
+| RDM | 16-bit | Memory Data Register (holds fetched addresses) |
+| AC | 8-bit | Accumulator |
+| X | 8-bit | Index Register X |
+| Y | 8-bit | Index Register Y |
+| RI | 8-bit | Instruction Register (opcode) |
+| N, Z, C | 1-bit | Condition Flags |
+
 ## Pin Connections
 
-The NEANDER-X processor uses an **SPI memory interface** to connect to external SPI SRAM, requiring only 4 pins for memory access (vs 15 pins for parallel RAM). This enables a 256-byte address space while freeing pins for debug outputs.
+The NEANDER-X processor uses an **SPI memory interface** to connect to external SPI SRAM, requiring only 4 pins for memory access (vs 15 pins for parallel RAM). This enables a **64KB address space** while freeing pins for debug outputs.
 
 ### Pin Map
 
@@ -426,10 +479,11 @@ The NEANDER-X processor uses an **SPI memory interface** to connect to external 
 
 | Pin | Signal | Description |
 |-----|--------|-------------|
-| uio[7:0] | DBG_PC | Debug: Program Counter (8-bit) |
+| uio[7:0] | DBG_PC[7:0] | Debug: Program Counter low byte |
 
 - **Direction**: All outputs (`uio_oe` = 0xFF)
-- Used for debugging/monitoring PC during execution
+- Shows the lower 8 bits of the 16-bit Program Counter
+- Full 16-bit PC available via debug signals in simulation
 
 #### Dedicated Inputs (`ui_in`)
 
@@ -498,7 +552,7 @@ For detailed protocol information, see [SPI SRAM Memory](docs/SPI_SRAM_MEMORY.md
 
 | Component | Purpose | Example Parts |
 |-----------|---------|---------------|
-| SPI SRAM | Program and data storage (256 bytes) | **23LC512**, 23K256, 23LC1024 |
+| SPI SRAM | Program and data storage (64KB) | **23LC512** (64KB), 23LC1024 (128KB) |
 | 8-bit Latch | Capture I/O output | 74HC574, 74HC374 |
 | DIP Switches | Input port (7-bit) | 8-position DIP (bit 0 unused) |
 | LED Array | Display output | 8x LEDs with resistors |
@@ -508,9 +562,9 @@ For detailed protocol information, see [SPI SRAM Memory](docs/SPI_SRAM_MEMORY.md
 | Interface | Memory Pins | Address Space | Debug Pins Available |
 |-----------|-------------|---------------|---------------------|
 | Parallel (old) | 15 pins | 32 bytes | 0 |
-| **SPI (current)** | **4 pins** | **256 bytes** | **12 pins** |
+| **SPI (current)** | **4 pins** | **64KB** | **12 pins** |
 
-The SPI interface saves 11 pins while providing 8x more memory!
+The SPI interface saves 11 pins while providing **2048x more memory** (64KB vs 32 bytes)!
 
 ## Documentation
 
@@ -539,22 +593,25 @@ make
 
 ### Example Program
 
-A simple program that calculates 5 + 3 and outputs the result:
+A simple program that calculates 5 + 3 and outputs the result (16-bit address format):
 
 ```
 Address  Code   Instruction
-0x00     0xE0   LDI 5         ; AC = 5
-0x01     0x05
-0x02     0x30   ADD [0x10]    ; AC = AC + MEM[0x10]
-0x03     0x10
-0x04     0xD0   OUT 0         ; Output AC
-0x05     0x00
-0x06     0xF0   HLT           ; Halt
+0x0000   0xE0   LDI 5         ; AC = 5
+0x0001   0x05
+0x0002   0x30   ADD [0x0012]  ; AC = AC + MEM[0x0012]
+0x0003   0x12   ; addr_lo
+0x0004   0x00   ; addr_hi
+0x0005   0xD0   OUT 0         ; Output AC
+0x0006   0x00
+0x0007   0xF0   HLT           ; Halt
 ...
-0x10     0x03   ; Data: 3
+0x0012   0x03   ; Data: 3
 ```
 
 Result: Output = 8
+
+**Note:** Memory-addressing instructions now use 3 bytes: `[opcode] [addr_lo] [addr_hi]` (little-endian). This enables full 64KB addressing.
 
 ## TinyTapeout Build Configuration
 

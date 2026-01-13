@@ -2,6 +2,8 @@
 
 This document describes the stack extension for the NEANDER-X processor, adding PUSH, POP, CALL, and RET instructions to enable subroutine support and stack-based data management.
 
+**16-bit Addressing Update:** With 16-bit addressing, the Stack Pointer (SP) and Frame Pointer (FP) are now **16-bit registers**, and CALL/RET operations push/pop **16-bit return addresses**.
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -21,15 +23,15 @@ The NEANDER-X Stack Extension adds four new instructions using opcode 0x7 with s
 
 | Instruction | Encoding | Operation |
 |-------------|----------|-----------|
-| PUSH | 0x70 | Push AC onto stack |
-| POP | 0x71 | Pop from stack to AC |
-| CALL addr | 0x72 addr | Call subroutine |
-| RET | 0x73 | Return from subroutine |
+| PUSH | 0x70 | Push AC (8-bit) onto stack |
+| POP | 0x71 | Pop from stack to AC (8-bit) |
+| CALL addr | 0x72 addr_lo addr_hi | Call subroutine (pushes 16-bit return address) |
+| RET | 0x73 | Return from subroutine (pops 16-bit return address) |
 
 These instructions enable:
-- **Data stack operations** - Save/restore values during computation
-- **Subroutine calls** - Modular code with reusable functions
-- **Nested function calls** - Functions calling other functions
+- **Data stack operations** - Save/restore 8-bit values during computation
+- **Subroutine calls** - Modular code with 16-bit target addresses (full 64KB range)
+- **Nested function calls** - Functions calling other functions with 16-bit return addresses
 - **Local variable storage** - Temporary storage on stack
 
 ---
@@ -72,48 +74,66 @@ The stack extension is **fully backward compatible** with vanilla NEANDER-X:
 
 ## Stack Architecture
 
-### Stack Pointer (SP)
+### Stack Pointer (SP) - 16-bit
 
-A new 8-bit register manages the stack:
+The Stack Pointer is now a **16-bit register** to support the full 64KB address space:
 
 | Property | Value |
 |----------|-------|
-| Width | 8 bits |
-| Reset Value | 0xFF |
+| Width | **16 bits** |
+| Reset Value | **0x00FF** (top of page 0, backward compatible) |
 | Growth Direction | Downward (decrement on push) |
 | Operations | Increment, Decrement |
+| Address Range | 0x0000 - 0xFFFF |
 
-### Memory Layout
+### Memory Layout (64KB)
 
 ```
-+----------+------------------+
-| Address  | Usage            |
-+----------+------------------+
-| 0x00-0x7F| Program Code     |
-| 0x80-0xEF| Data/Variables   |
-| 0xF0-0xFF| Stack (16 bytes) |
-+----------+------------------+
++------------------+------------------+
+| Address Range    | Usage            |
++------------------+------------------+
+| 0x0000-0x00FF    | Page 0 (stack grows down from 0x00FF) |
+| 0x0100-0x7FFF    | Program Code / Data |
+| 0x8000-0xFFFF    | Extended Data / Large Programs |
++------------------+------------------+
          ^
          |
-    SP starts at 0xFF,
-    grows downward
+    SP starts at 0x00FF,
+    grows downward toward 0x0000
 ```
 
 ### Stack Operation Model
 
 **Push (pre-decrement):**
 ```
-SP = SP - 1      ; Decrement first
-MEM[SP] = data   ; Then write
+SP = SP - 1      ; Decrement 16-bit SP first
+MEM[SP] = data   ; Then write 8-bit data
 ```
 
 **Pop (post-increment):**
 ```
-data = MEM[SP]   ; Read first
-SP = SP + 1      ; Then increment
+data = MEM[SP]   ; Read 8-bit data first
+SP = SP + 1      ; Then increment 16-bit SP
 ```
 
-This model allows the stack to grow from high memory (0xFF) toward low memory, with SP always pointing to the top (most recently pushed) item.
+**CALL (16-bit return address):**
+```
+SP = SP - 1
+MEM[SP] = PC[15:8]   ; Push PC high byte first
+SP = SP - 1
+MEM[SP] = PC[7:0]    ; Push PC low byte second
+PC = target_addr     ; Jump to 16-bit target
+```
+
+**RET (16-bit return address):**
+```
+PC[7:0] = MEM[SP]    ; Pop PC low byte first
+SP = SP + 1
+PC[15:8] = MEM[SP]   ; Pop PC high byte second
+SP = SP + 1
+```
+
+This model allows the stack to grow from 0x00FF toward 0x0000, with SP always pointing to the top (most recently pushed) item. Each CALL/RET uses 2 bytes of stack space for the 16-bit return address.
 
 ---
 
@@ -166,107 +186,144 @@ S_POP_2: mem_read = 1                     ; Read [REM]
 S_POP_3: ac_load = 1, nz_load = 1, sp_inc = 1 ; Load AC, update flags, increment SP
 ```
 
-### CALL (0x72 addr)
+### CALL (0x72 addr_lo addr_hi) - 16-bit Target Address
 
-Call a subroutine at the specified address.
+Call a subroutine at the specified 16-bit address.
 
-**Encoding:** `0x72 addr`
+**Encoding:** `0x72 addr_lo addr_hi` (3 bytes, little-endian)
 
 **Operation:**
 ```
-; Fetch target address to RDM
-; Push return address (PC after CALL) onto stack
+; Fetch 16-bit target address to RDM
+RDM[7:0]  = MEM[PC]; PC++   ; Fetch addr_lo
+RDM[15:8] = MEM[PC]; PC++   ; Fetch addr_hi
+; Push 16-bit return address onto stack (2 bytes)
 SP = SP - 1
-MEM[SP] = PC
+MEM[SP] = PC[15:8]          ; Push PC high byte
+SP = SP - 1
+MEM[SP] = PC[7:0]           ; Push PC low byte
 ; Jump to subroutine
-PC = target_addr
+PC = RDM                    ; Load 16-bit target address
 ```
 
 **Flags Affected:** None
 
-**Cycles:** 5 states (S_CALL_1 through S_CALL_5)
+**Cycles:** 9 states (S_CALL_1 through S_CALL_7)
 
 **FSM States:**
 ```
-S_CALL_1: addr_sel = 2'b01, rem_load = 1, mem_read = 1  ; Fetch target addr
-S_CALL_2: rdm_load = 1, pc_inc = 1                       ; Load target to RDM, PC = return addr
-S_CALL_3: sp_dec = 1                                     ; Decrement SP
-S_CALL_4: addr_sel = 2'b10, rem_load = 1                 ; SP -> REM
-S_CALL_5: mem_write = 1, mem_data_sel = 1, pc_load = 1   ; Write PC to stack, jump to target
+S_CALL_1:  addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM
+S_CALL_2:  rdm_load=1, pc_inc=1                      ; Fetch addr_lo to RDM[7:0]
+S_CALL_2B: addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM
+S_CALL_2C: rdm_load_hi=1, pc_inc=1                   ; Fetch addr_hi to RDM[15:8]
+S_CALL_3:  sp_dec=1                                  ; SP--
+S_CALL_4:  addr_sel=10(SP), rem_load=1, mem_write=1  ; Push PC[15:8]
+           mem_data_sel=PC_HI
+S_CALL_5:  sp_dec=1                                  ; SP--
+S_CALL_6:  addr_sel=10(SP), rem_load=1, mem_write=1  ; Push PC[7:0]
+           mem_data_sel=PC_LO
+S_CALL_7:  pc_load=1                                 ; PC <- RDM (16-bit)
 ```
 
-### RET (0x73)
+**Stack Usage:** Each CALL consumes **2 bytes** of stack space for the 16-bit return address.
 
-Return from a subroutine.
+### RET (0x73) - 16-bit Return Address
 
-**Encoding:** `0x73 0xXX` (second byte ignored)
+Return from a subroutine by popping a 16-bit return address.
+
+**Encoding:** `0x73` (1 byte)
 
 **Operation:**
 ```
-PC = MEM[SP]
-SP = SP + 1
+; Pop 16-bit return address from stack (2 bytes)
+PC[7:0]  = MEM[SP]; SP++    ; Pop PC low byte
+PC[15:8] = MEM[SP]; SP++    ; Pop PC high byte
+; Resume execution at return address
 ```
 
 **Flags Affected:** None
 
-**Cycles:** 3 states (S_RET_1, S_RET_2, S_RET_3)
+**Cycles:** 6 states (S_RET_1 through S_RET_6)
 
 **FSM States:**
 ```
-S_RET_1: addr_sel = 2'b10, rem_load = 1  ; SP -> REM
-S_RET_2: mem_read = 1, rdm_load = 1       ; Read return address to RDM
-S_RET_3: pc_load = 1, sp_inc = 1          ; Load PC from RDM, increment SP
+S_RET_1: addr_sel=10(SP), rem_load=1, mem_read=1   ; SP -> REM
+S_RET_2: rdm_load=1, sp_inc=1                      ; Pop PC[7:0] to RDM[7:0], SP++
+S_RET_3: addr_sel=10(SP), rem_load=1, mem_read=1   ; SP -> REM
+S_RET_4: rdm_load_hi=1, sp_inc=1                   ; Pop PC[15:8] to RDM[15:8], SP++
+S_RET_5: pc_load=1                                 ; PC <- RDM (16-bit)
+S_RET_6: (return to FETCH)
 ```
+
+**Stack Usage:** Each RET restores **2 bytes** from the stack.
 
 ---
 
 ## Hardware Changes
 
-### New Registers
+### New Registers (16-bit)
 
-**Stack Pointer (SP):**
+**Stack Pointer (SP) - 16-bit:**
 ```systemverilog
 module sp_reg (
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       sp_inc,
-    input  logic       sp_dec,
-    input  logic       sp_load,
-    input  logic [7:0] data_in,
-    output logic [7:0] sp_value
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        sp_inc,
+    input  logic        sp_dec,
+    input  logic        sp_load,
+    input  logic [15:0] data_in,
+    output logic [15:0] sp_value    // 16-bit
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset)
-            sp_value <= 8'hFF;  // Stack starts at top of memory
+            sp_value <= 16'h00FF;   // Stack starts at 0x00FF (backward compatible)
         else if (sp_load)
             sp_value <= data_in;
         else if (sp_dec)
-            sp_value <= sp_value - 8'h01;
+            sp_value <= sp_value - 16'h0001;
         else if (sp_inc)
-            sp_value <= sp_value + 8'h01;
+            sp_value <= sp_value + 16'h0001;
     end
 endmodule
 ```
 
-### Extended Address MUX
-
-The address multiplexer is extended from 2-way to 3-way:
-
-**Before (vanilla NEANDER-X):**
+**Frame Pointer (FP) - 16-bit:**
 ```systemverilog
-// addr_sel_pc: 1 = PC, 0 = RDM
-assign addr_mux = addr_sel_pc ? pc : rdm;
+module fp_reg (
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        fp_load,      // Full 16-bit load from SP (TSF)
+    input  logic        fp_load_lo,   // Load low byte (POP_FP step 1)
+    input  logic        fp_load_hi,   // Load high byte (POP_FP step 2)
+    input  logic [15:0] data_in,      // 16-bit input (from SP or memory)
+    input  logic [7:0]  data_in_byte, // 8-bit input (from memory)
+    output logic [15:0] fp_value      // 16-bit
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            fp_value <= 16'h0000;
+        else if (fp_load)
+            fp_value <= data_in;      // Full 16-bit load
+        else if (fp_load_lo)
+            fp_value[7:0] <= data_in_byte;   // Load low byte
+        else if (fp_load_hi)
+            fp_value[15:8] <= data_in_byte;  // Load high byte
+    end
+endmodule
 ```
 
-**After (stack extension):**
+### Extended Address MUX (16-bit, 3-way)
+
+The address multiplexer handles 16-bit addresses:
+
 ```systemverilog
 // addr_sel[1:0]: 00 = RDM, 01 = PC, 10 = SP
 module mux_addr (
-    input  logic [1:0] sel,
-    input  logic [7:0] pc,
-    input  logic [7:0] rdm,
-    input  logic [7:0] sp,
-    output logic [7:0] out
+    input  logic [1:0]  sel,
+    input  logic [15:0] pc,      // 16-bit
+    input  logic [15:0] rdm,     // 16-bit
+    input  logic [15:0] sp,      // 16-bit
+    output logic [15:0] out      // 16-bit
 );
     always_comb begin
         case (sel)
@@ -279,41 +336,66 @@ module mux_addr (
 endmodule
 ```
 
-### Memory Data MUX
+### Memory Data MUX (Extended for 16-bit PC)
 
-A new multiplexer selects the data source for memory writes (needed for CALL to write PC):
+The memory data multiplexer now supports writing individual bytes of 16-bit registers:
 
 ```systemverilog
-// mem_data_sel: 0 = AC (for STA, PUSH), 1 = PC (for CALL)
-assign mem_data_out = mem_data_sel ? pc : ac;
+// mem_data_sel_ext[2:0]: Extended for 16-bit operations
+//   000 = AC     (for STA, PUSH)
+//   001 = PC_LO  (for CALL - push return address low byte)
+//   010 = X      (for STX)
+//   011 = Y      (for STY)
+//   100 = FP_LO  (for PUSH_FP - push FP low byte)
+//   101 = PC_HI  (for CALL - push return address high byte)
+//   110 = FP_HI  (for PUSH_FP - push FP high byte)
+always_comb begin
+    case (mem_data_sel_ext)
+        3'b000:  mem_data_out = ac;
+        3'b001:  mem_data_out = pc[7:0];    // PC low byte
+        3'b010:  mem_data_out = x;
+        3'b011:  mem_data_out = y;
+        3'b100:  mem_data_out = fp[7:0];    // FP low byte
+        3'b101:  mem_data_out = pc[15:8];   // PC high byte
+        3'b110:  mem_data_out = fp[15:8];   // FP high byte
+        default: mem_data_out = ac;
+    endcase
+end
 ```
 
-### New Control Signals
+### New Control Signals (16-bit Support)
 
 | Signal | Width | Description |
 |--------|-------|-------------|
-| `addr_sel` | 2 bits | Address source: 00=RDM, 01=PC, 10=SP |
-| `sp_inc` | 1 bit | Increment stack pointer (POP, RET) |
-| `sp_dec` | 1 bit | Decrement stack pointer (PUSH, CALL) |
-| `mem_data_sel` | 1 bit | Memory data source: 0=AC, 1=PC |
+| `addr_sel` | 2 bits | Address source: 00=RDM, 01=PC, 10=SP (all 16-bit) |
+| `sp_inc` | 1 bit | Increment 16-bit stack pointer (POP, RET) |
+| `sp_dec` | 1 bit | Decrement 16-bit stack pointer (PUSH, CALL) |
+| `rdm_load_hi` | 1 bit | Load RDM high byte (16-bit address fetch) - **NEW** |
+| `fp_load_lo` | 1 bit | Load FP low byte (POP_FP) - **NEW** |
+| `fp_load_hi` | 1 bit | Load FP high byte (POP_FP) - **NEW** |
+| `mem_data_sel_ext` | 3 bits | Extended: AC, PC_LO, PC_HI, X, Y, FP_LO, FP_HI |
 | `sub_opcode` | 4 bits | Lower nibble of RI for stack ops |
 
-### Updated Module Hierarchy
+### Updated Module Hierarchy (16-bit)
 
 ```
-cpu_top
-├── neander_datapath
-│   ├── pc_reg
-│   ├── sp_reg              <-- NEW
-│   ├── mux_addr (3-way)    <-- EXTENDED
-│   ├── generic_reg (REM)
-│   ├── generic_reg (RDM)
-│   ├── generic_reg (RI)
-│   ├── generic_reg (AC)
-│   ├── neander_alu
-│   └── nz_reg
-├── neander_control         <-- EXTENDED with new states
-└── ram_256x8 (external)
+tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper)
+├── cpu_top
+│   ├── neander_datapath
+│   │   ├── pc_reg (16-bit)
+│   │   ├── sp_reg (16-bit, reset=0x00FF)
+│   │   ├── fp_reg (16-bit, separate lo/hi loading)
+│   │   ├── rdm_reg (16-bit, separate lo/hi loading)
+│   │   ├── mux_addr (3-way, 16-bit)
+│   │   ├── generic_reg_16 (REM - 16-bit)
+│   │   ├── generic_reg (RI, AC - 8-bit)
+│   │   ├── x_reg (8-bit)
+│   │   ├── y_reg (8-bit)
+│   │   ├── neander_alu
+│   │   └── nzc_reg (N, Z, C flags)
+│   └── neander_control (FSM ~90 states, 9-bit encoding)
+│
+└── spi_memory_controller (16-bit address support)
 ```
 
 ---
@@ -554,20 +636,33 @@ make
 
 ## Summary
 
-The NEANDER-X Stack Extension provides essential subroutine and stack support while maintaining full backward compatibility:
+The NEANDER-X Stack Extension provides essential subroutine and stack support with **full 16-bit addressing**:
 
-| Feature | Vanilla NEANDER-X | Stack-Extended |
-|---------|-------------------|----------------|
-| Opcode 0x7 | Unused | PUSH/POP/CALL/RET |
-| Stack Pointer | None | SP register (8-bit) |
-| Address MUX | 2-way (PC/RDM) | 3-way (PC/RDM/SP) |
-| Subroutines | Not supported | Full support |
-| Nested Calls | Not supported | Supported |
-| Data Stack | Not available | Available |
+| Feature | Original 8-bit | 16-bit Extended |
+|---------|----------------|-----------------|
+| Stack Pointer (SP) | 8-bit | **16-bit** |
+| Frame Pointer (FP) | 8-bit | **16-bit** |
+| Return Address | 8-bit (1 byte on stack) | **16-bit (2 bytes on stack)** |
+| CALL Target | 8-bit address | **16-bit address (3-byte instruction)** |
+| Address MUX | 2-way (PC/RDM) | **3-way (PC/RDM/SP), 16-bit** |
+| Address Range | 256 bytes | **64KB** |
+| FSM States for CALL | 5 states | **9 states** |
+| FSM States for RET | 3 states | **6 states** |
 
-This extension enables modular programming with reusable subroutines, making the NEANDER-X a more capable educational processor while preserving its simplicity and educational value.
+### Stack Usage Comparison
+
+| Operation | 8-bit Version | 16-bit Version |
+|-----------|---------------|----------------|
+| PUSH AC | 1 byte | 1 byte (unchanged) |
+| POP AC | 1 byte | 1 byte (unchanged) |
+| CALL | 1 byte (8-bit return addr) | **2 bytes (16-bit return addr)** |
+| RET | 1 byte | **2 bytes** |
+| PUSH_FP | 1 byte | **2 bytes (16-bit FP)** |
+| POP_FP | 1 byte | **2 bytes (16-bit FP)** |
+
+This extension enables modular programming with reusable subroutines across the full 64KB address space, making the NEANDER-X suitable for larger programs and C compiler support.
 
 ---
 
-*Document Version: 1.0*
+*Document Version: 2.0 (16-bit Addressing)*
 *Last Updated: January 2026*

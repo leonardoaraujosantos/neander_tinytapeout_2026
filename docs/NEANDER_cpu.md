@@ -2,6 +2,8 @@
 
 This document provides a complete guide for implementing the Neander processor in SystemVerilog. The Neander is an educational 8-bit processor developed at UFRGS (Universidade Federal do Rio Grande do Sul) for teaching fundamental computer architecture concepts.
 
+**NEANDER-X Extension:** This implementation extends the original NEANDER with 16-bit addressing, enabling a full 64KB address space accessed via SPI SRAM.
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -28,64 +30,85 @@ The Neander processor is a minimal, accumulator-based architecture designed for 
 - Datapath components and interconnections
 - Assembly language programming fundamentals
 
-### Key Features
+### Key Features (NEANDER-X with 16-bit Addressing)
 
 - 8-bit data width
-- 8-bit address space (256 bytes of memory)
-- Single accumulator architecture
-- Direct addressing mode only
-- Two condition flags (N and Z)
-- 11 instructions (including NOP and HLT)
+- **16-bit address space (64KB of memory via SPI SRAM)**
+- Single accumulator architecture with X, Y, and FP registers
+- Direct and indexed addressing modes
+- Three condition flags (N, Z, and C)
+- **60+ instructions** including stack operations, hardware multiply/divide
+- **16-bit registers**: PC, SP, FP, REM, RDM for full address range
+- FSM-based control unit with ~90 states
 
 ---
 
 ## Architecture Specifications
 
-| Parameter | Value |
-|-----------|-------|
-| Data Width | 8 bits |
-| Address Width | 8 bits |
-| Memory Size | 256 bytes |
-| Number Format | Two's complement |
-| Addressing Mode | Direct only |
-| Accumulator Count | 1 |
-| Condition Flags | 2 (N, Z) |
+| Parameter | Value (Original NEANDER) | Value (NEANDER-X) |
+|-----------|--------------------------|-------------------|
+| Data Width | 8 bits | 8 bits |
+| Address Width | 8 bits | **16 bits** |
+| Memory Size | 256 bytes | **64KB (via SPI SRAM)** |
+| Number Format | Two's complement | Two's complement |
+| Addressing Mode | Direct only | Direct, Indexed (X, Y, FP) |
+| Accumulator Count | 1 | 1 + X, Y registers |
+| Condition Flags | 2 (N, Z) | **3 (N, Z, C)** |
+| Instruction Count | 11 | **60+** |
 
-### Block Diagram
+### NEANDER-X Register Widths
+
+| Register | Width | Description |
+|----------|-------|-------------|
+| PC | 16-bit | Program Counter (0x0000-0xFFFF) |
+| SP | 16-bit | Stack Pointer (reset: 0x00FF) |
+| FP | 16-bit | Frame Pointer |
+| REM | 16-bit | Memory Address Register |
+| RDM | 16-bit | Memory Data Register (for 16-bit addresses) |
+| AC | 8-bit | Accumulator |
+| X | 8-bit | Index Register X |
+| Y | 8-bit | Index Register Y |
+| RI | 8-bit | Instruction Register |
+
+### Block Diagram (NEANDER-X with 16-bit Addressing)
 
 ```
                     +------------------+
-                    |      Memory      |
-                    |    (256 x 8)     |
+                    |   SPI SRAM       |
+                    |    (64KB)        |
                     +--------+---------+
                              |
               +--------------+---------------+
-              |                              |
-              v                              v
-         +----+----+                   +-----+-----+
-         |   REM   |<---+              |    RDM    |
-         +---------+    |              +-----------+
-              |         |                    |
-              v         |                    v
-         +----+----+    |              +-----+-----+
-         |   MUX   |----+              |    RI     |
-         +---------+                   +-----------+
-              ^                              |
-              |                              v
-         +----+----+                   +-----+-----+
-         |   PC    |                   |  Decoder  |
-         +---------+                   +-----------+
-                                             |
+              | 16-bit addr  |  8-bit data   |
+              v              |               v
+         +----+----+         |         +-----+-----+
+         |   REM   |<---+    |         |    RDM    |
+         | (16-bit)|    |    |         |  (16-bit) |
+         +---------+    |    |         +-----------+
+              |         |    |               |
+              v         |    |               v
+         +----+----+    |    |         +-----+-----+
+         |   MUX   |----+    |         |    RI     |
+         | (16-bit)|         |         |  (8-bit)  |
+         +---------+         |         +-----------+
+              ^              |               |
+              |              |               v
+         +----+----+    +----+----+    +-----+-----+
+         |   PC    |    |   SP    |    |  Decoder  |
+         | (16-bit)|    | (16-bit)|    +-----------+
+         +---------+    +---------+          |
+                                             v
               +------------------------------+
               |
               v
-         +----+----+     +----------+
-         |   AC    |<----|   ALU    |
-         +---------+     +----------+
+         +----+----+     +----------+     +-----+-----+
+         |   AC    |<----|   ALU    |---->|   X, Y    |
+         | (8-bit) |     +----------+     |  (8-bit)  |
+         +---------+                      +-----------+
               |
               v
          +----+----+
-         |  N | Z  |
+         | N |Z| C |
          +---------+
 ```
 
@@ -93,16 +116,29 @@ The Neander processor is a minimal, accumulator-based architecture designed for 
 
 ## Instruction Set Architecture
 
-### Instruction Format
+### Instruction Format (16-bit Addressing)
 
-All instructions follow a simple two-byte format:
+With 16-bit addressing, instructions use variable-length encoding:
 
+**3-byte format (memory operations):**
 ```
-Byte 0: [Opcode (4 bits)] [Don't Care (4 bits)]
-Byte 1: [Address/Operand (8 bits)]
+Byte 0: [Opcode (8 bits)]
+Byte 1: [Address Low (8 bits)]
+Byte 2: [Address High (8 bits)]
 ```
 
-For instructions without operands (NOP, NOT, HLT), only the first byte is used.
+**2-byte format (immediate/port operations):**
+```
+Byte 0: [Opcode (8 bits)]
+Byte 1: [Immediate/Port (8 bits)]
+```
+
+**1-byte format (register operations):**
+```
+Byte 0: [Opcode (8 bits)]
+```
+
+The address is stored in **little-endian** order (low byte first, high byte second).
 
 ### Complete Instruction Set
 
@@ -148,15 +184,26 @@ occupies the upper region of memory (addresses 0xFF downward).
 | 0x72 | CALL addr | PUSH PC+2; PC <- addr | Call subroutine |
 | 0x73 | RET | POP to PC | Return from subroutine |
 
-### Instruction Encoding Examples
+### Instruction Encoding Examples (16-bit Addressing)
 
 ```
-LDA 0x80    -> 0x20 0x80    ; Load from address 128
-ADD 0x81    -> 0x30 0x81    ; Add value at address 129
-STA 0x82    -> 0x10 0x82    ; Store at address 130
-JMP 0x00    -> 0x80 0x00    ; Jump to address 0
-NOT         -> 0x60 0x00    ; Complement accumulator
-HLT         -> 0xF0 0x00    ; Halt
+; Memory operations (3 bytes: opcode + addr_lo + addr_hi)
+LDA 0x0080  -> 0x20 0x80 0x00    ; Load from address 0x0080
+ADD 0x1234  -> 0x30 0x34 0x12    ; Add value at address 0x1234
+STA 0x8000  -> 0x10 0x00 0x80    ; Store at address 0x8000
+JMP 0x0100  -> 0x80 0x00 0x01    ; Jump to address 0x0100
+CALL 0x2000 -> 0x72 0x00 0x20    ; Call subroutine at 0x2000
+
+; Immediate/port operations (2 bytes)
+LDI 0x42    -> 0xE0 0x42         ; Load immediate 0x42
+OUT 0       -> 0xD0 0x00         ; Output to port 0
+
+; Single-byte operations
+NOT         -> 0x60              ; Complement accumulator
+HLT         -> 0xF0              ; Halt
+RET         -> 0x73              ; Return from subroutine
+PUSH        -> 0x70              ; Push AC onto stack
+POP         -> 0x71              ; Pop from stack to AC
 ```
 
 ---
@@ -165,27 +212,28 @@ HLT         -> 0xF0 0x00    ; Halt
 
 ### Program Counter (PC)
 
-- **Width**: 8 bits
+- **Width**: **16 bits** (extended from 8 bits)
 - **Function**: Holds the address of the next instruction to fetch
 - **Operations**: Increment, Load (for jumps)
-- **Reset Value**: 0x00
+- **Reset Value**: 0x0000
+- **Address Range**: 0x0000 - 0xFFFF (64KB)
 
 ```systemverilog
 module pc_reg (
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       pc_inc,
-    input  logic       pc_load,
-    input  logic [7:0] data_in,
-    output logic [7:0] pc_value
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        pc_inc,
+    input  logic        pc_load,
+    input  logic [15:0] data_in,    // 16-bit input
+    output logic [15:0] pc_value    // 16-bit output
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset)
-            pc_value <= 8'h00;
+            pc_value <= 16'h0000;
         else if (pc_load)
             pc_value <= data_in;
         else if (pc_inc)
-            pc_value <= pc_value + 8'h01;
+            pc_value <= pc_value + 16'h0001;
     end
 endmodule
 ```
@@ -199,15 +247,37 @@ endmodule
 
 ### Memory Address Register (REM)
 
-- **Width**: 8 bits
+- **Width**: **16 bits** (extended from 8 bits)
 - **Function**: Holds the address for memory access
-- **Source**: PC (instruction fetch) or RDM (operand address)
+- **Source**: PC (instruction fetch), RDM (operand address), or SP (stack access)
+- **Indexed Addressing**: Supports REM + X, REM + Y, REM + FP for indexed modes
 
 ### Memory Data Register (RDM)
 
-- **Width**: 8 bits
-- **Function**: Holds data read from memory
-- **Usage**: Temporarily stores instruction operands
+- **Width**: **16 bits** (extended from 8 bits)
+- **Function**: Holds data read from memory (including 16-bit addresses)
+- **Usage**: Temporarily stores instruction operands and 16-bit target addresses
+- **Special Feature**: Separate load signals for low byte (`rdm_load`) and high byte (`rdm_load_hi`) to support fetching 16-bit addresses in two memory reads
+
+```systemverilog
+module rdm_reg (
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        load_lo,    // Load low byte (addr_lo)
+    input  logic        load_hi,    // Load high byte (addr_hi)
+    input  logic [7:0]  data_in,    // 8-bit data from memory
+    output logic [15:0] rdm_value   // Full 16-bit value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            rdm_value <= 16'h0000;
+        else if (load_lo)
+            rdm_value[7:0] <= data_in;   // Load low byte
+        else if (load_hi)
+            rdm_value[15:8] <= data_in;  // Load high byte
+    end
+endmodule
+```
 
 ### Instruction Register (RI)
 
@@ -215,29 +285,39 @@ endmodule
 - **Function**: Holds the current instruction opcode
 - **Opcode Extraction**: Upper 4 bits (RI[7:4])
 
-### Condition Flags (N, Z)
+### Condition Flags (N, Z, C)
 
 - **N (Negative)**: Set when AC[7] = 1 (MSB indicates negative in two's complement)
 - **Z (Zero)**: Set when AC = 0x00
+- **C (Carry)**: Set on arithmetic overflow/borrow, shift out, or MUL overflow
+
+The Carry flag enables:
+- Unsigned comparisons (JC, JNC after CMP)
+- Multi-byte arithmetic (ADC, SBC propagate carry between bytes)
+- Hardware multiply overflow detection (C=1 when result > 255)
 
 ```systemverilog
-module nz_reg (
+module nzc_reg (
     input  logic clk,
     input  logic reset,
-    input  logic nz_load,
+    input  logic nzc_load,
     input  logic N_in,
     input  logic Z_in,
+    input  logic C_in,
     output logic N_flag,
-    output logic Z_flag
+    output logic Z_flag,
+    output logic C_flag
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             N_flag <= 1'b0;
             Z_flag <= 1'b0;
+            C_flag <= 1'b0;
         end
-        else if (nz_load) begin
+        else if (nzc_load) begin
             N_flag <= N_in;
             Z_flag <= Z_in;
+            C_flag <= C_in;
         end
     end
 endmodule
@@ -247,115 +327,171 @@ endmodule
 
 ## Memory Organization
 
-### Address Space
+### Address Space (64KB)
+
+With 16-bit addressing, the full 64KB address space is available:
 
 ```
-+----------+------------------+
-| Address  | Usage            |
-+----------+------------------+
-| 0x00-0x7F| Program Code     |
-| 0x80-0xFF| Data/Variables   |
-+----------+------------------+
++----------------+------------------+
+| Address Range  | Usage            |
++----------------+------------------+
+| 0x0000-0x00FF  | Page 0 (stack grows down from 0x00FF) |
+| 0x0100-0x7FFF  | Program Code / Data |
+| 0x8000-0xFFFF  | Extended Data / Large Programs |
++----------------+------------------+
 ```
 
-### Memory Module
+The Stack Pointer (SP) is initialized to 0x00FF and grows downward toward 0x0000.
 
-The memory is implemented as a 256x8 asynchronous RAM:
+### Memory Interface (SPI SRAM)
+
+Memory is accessed via an external SPI SRAM chip (e.g., 23LC512). The SPI Memory Controller handles the parallel-to-serial conversion:
 
 ```systemverilog
-module ram_256x8 (
-    input  logic        clk,
-    input  logic        mem_write,
-    input  logic [7:0]  addr,
-    input  logic [7:0]  data_in,
-    output logic [7:0]  data_out
-);
-    logic [7:0] mem [0:255];
-
-    // Asynchronous read
-    assign data_out = mem[addr];
-
-    // Synchronous write
-    always_ff @(posedge clk) begin
-        if (mem_write)
-            mem[addr] <= data_in;
-    end
-endmodule
+// CPU Memory Interface (parallel, 16-bit address)
+output logic [15:0] mem_addr,      // 16-bit address
+output logic [7:0]  mem_wdata,     // 8-bit write data
+input  logic [7:0]  mem_rdata,     // 8-bit read data
+output logic        mem_req,       // Memory request
+input  logic        mem_ready,     // Memory ready
+output logic        mem_we         // Write enable
 ```
+
+Each memory access takes approximately **70 CPU cycles** due to the SPI protocol overhead (command + 16-bit address + data).
+
+### SPI Memory Controller
+
+The SPI controller converts parallel CPU requests to serial SPI transactions:
+
+```
+CPU Request → SPI Controller → SPI SRAM
+  [addr 16-bit]     [CS, SCLK, MOSI]     [64KB storage]
+  [data 8-bit]      [MISO]
+  [req/ready]
+```
+
+Protocol: SPI Mode 0 (CPOL=0, CPHA=0)
+- READ command: 0x03 + addr_hi + addr_lo + (receive data)
+- WRITE command: 0x02 + addr_hi + addr_lo + data
 
 ---
 
 ## Datapath Design
 
-### Control Signals
+### Control Signals (16-bit Addressing)
 
 | Signal | Description |
 |--------|-------------|
 | `mem_read` | Enable memory read operation |
 | `mem_write` | Enable memory write operation |
-| `pc_inc` | Increment program counter |
-| `pc_load` | Load program counter (jump) |
+| `pc_inc` | Increment 16-bit program counter |
+| `pc_load` | Load 16-bit program counter (jump) |
 | `ac_load` | Load accumulator |
 | `ri_load` | Load instruction register |
-| `rem_load` | Load memory address register |
-| `rdm_load` | Load memory data register |
-| `nz_load` | Update condition flags |
-| `addr_sel_pc` | MUX select: 1=PC, 0=RDM |
-| `alu_op[1:0]` | ALU operation select |
+| `rem_load` | Load 16-bit memory address register |
+| `rdm_load` | Load RDM low byte (addr_lo) |
+| `rdm_load_hi` | Load RDM high byte (addr_hi) - **NEW** |
+| `nzc_load` | Update condition flags (N, Z, C) |
+| `addr_sel[1:0]` | 3-way MUX: 00=RDM, 01=PC, 10=SP |
+| `alu_op[3:0]` | Extended ALU operation select |
+| `sp_inc` | Increment 16-bit stack pointer |
+| `sp_dec` | Decrement 16-bit stack pointer |
+| `fp_load` | Load 16-bit frame pointer from SP |
+| `fp_load_lo` | Load FP low byte (POP_FP) - **NEW** |
+| `fp_load_hi` | Load FP high byte (POP_FP) - **NEW** |
+| `mem_data_sel_ext[2:0]` | Memory write data source (extended for 16-bit) |
 
-### Address MUX
+### Address MUX (16-bit, 3-way)
 
-Selects between PC (for instruction fetch) and RDM (for operand access):
+Selects between PC (for instruction fetch), RDM (for operand address), and SP (for stack access):
 
 ```systemverilog
-module mux_pc_rdm (
-    input  logic       sel,    // 1 = PC, 0 = RDM
-    input  logic [7:0] pc,
-    input  logic [7:0] rdm,
-    output logic [7:0] out
+module mux_addr (
+    input  logic [1:0]  sel,     // 00=RDM, 01=PC, 10=SP
+    input  logic [15:0] pc,      // 16-bit PC
+    input  logic [15:0] rdm,     // 16-bit RDM
+    input  logic [15:0] sp,      // 16-bit SP
+    output logic [15:0] out      // 16-bit output
 );
-    assign out = sel ? pc : rdm;
+    always_comb begin
+        case (sel)
+            2'b00:   out = rdm;
+            2'b01:   out = pc;
+            2'b10:   out = sp;
+            default: out = rdm;
+        endcase
+    end
 endmodule
 ```
 
-### Datapath Module
+### Indexed Address Calculation
+
+For indexed addressing modes, the effective address is computed as:
+
+```systemverilog
+// Indexed addressing: base + index
+// X and Y are 8-bit, zero-extended to 16-bit
+// FP is already 16-bit
+always_comb begin
+    case (index_sel)
+        2'b00:   indexed_addr = rem;                      // Direct
+        2'b01:   indexed_addr = rem + {8'h00, x_reg};    // Indexed with X
+        2'b10:   indexed_addr = rem + {8'h00, y_reg};    // Indexed with Y
+        2'b11:   indexed_addr = rem + fp_reg;            // Indexed with FP (16-bit)
+        default: indexed_addr = rem;
+    endcase
+end
+```
+
+### Datapath Module (16-bit Addressing)
 
 ```systemverilog
 module neander_datapath (
-    input  logic       clk,
-    input  logic       reset,
+    input  logic        clk,
+    input  logic        reset,
 
     // Control Signals
-    input  logic       mem_read,
-    input  logic       mem_write,
-    input  logic       pc_inc,
-    input  logic       pc_load,
-    input  logic       ac_load,
-    input  logic       ri_load,
-    input  logic       rem_load,
-    input  logic       rdm_load,
-    input  logic       nz_load,
-    input  logic       addr_sel_pc,
-    input  logic [1:0] alu_op,
+    input  logic        mem_read,
+    input  logic        mem_write,
+    input  logic        pc_inc,
+    input  logic        pc_load,
+    input  logic        ac_load,
+    input  logic        ri_load,
+    input  logic        rem_load,
+    input  logic        rdm_load,
+    input  logic        rdm_load_hi,    // NEW: Load RDM high byte
+    input  logic        nzc_load,
+    input  logic [1:0]  addr_sel,       // 3-way mux select
+    input  logic [3:0]  alu_op,
+    input  logic        sp_inc,
+    input  logic        sp_dec,
+    input  logic        fp_load,
+    input  logic        fp_load_lo,     // NEW: Load FP low byte
+    input  logic        fp_load_hi,     // NEW: Load FP high byte
 
-    // Memory Interface
-    input  logic [7:0] mem_data_in,
-    output logic [7:0] mem_addr,
-    output logic [7:0] mem_data_out,
+    // Memory Interface (16-bit address)
+    input  logic [7:0]  mem_data_in,
+    output logic [15:0] mem_addr,       // 16-bit address
+    output logic [7:0]  mem_data_out,
 
     // Control Unit Interface
-    output logic [3:0] opcode,
-    output logic       flagN,
-    output logic       flagZ,
+    output logic [7:0]  opcode,
+    output logic        flagN,
+    output logic        flagZ,
+    output logic        flagC,
 
-    // Debug
-    output logic [7:0] dbg_pc,
-    output logic [7:0] dbg_ac
+    // Debug (16-bit)
+    output logic [15:0] dbg_pc,
+    output logic [15:0] dbg_sp,
+    output logic [15:0] dbg_fp,
+    output logic [7:0]  dbg_ac
 );
-    // Internal signals
-    logic [7:0] pc, rem, rdm, ri, ac;
-    logic [7:0] alu_res, addr_mux, ac_in;
-    logic       N_in, Z_in;
+    // Internal signals (16-bit for address registers)
+    logic [15:0] pc, rem, rdm, sp, fp;
+    logic [7:0]  ri, ac, x, y;
+    logic [7:0]  alu_res;
+    logic [15:0] addr_mux;
+    logic        N_in, Z_in, C_in;
 
     // Module instantiations and connections...
 endmodule
@@ -413,47 +549,87 @@ assign Z_in = (ac_in == 8'h00);
 
 The control unit implements a finite state machine with the following major phases:
 
-1. **FETCH**: Load instruction from memory
+1. **FETCH**: Load instruction opcode from memory
 2. **DECODE**: Determine instruction type
-3. **EXECUTE**: Perform the operation (instruction-specific states)
+3. **ADDRESS FETCH**: For memory instructions, fetch 16-bit address (2 bytes)
+4. **EXECUTE**: Perform the operation (instruction-specific states)
 
-### State Definitions
+### 16-bit Address Fetch Pattern
+
+With 16-bit addressing, memory-addressing instructions require **6 states** instead of 4:
+
+```
+S_xxx_1:  PC → REM (setup for addr_lo fetch)
+S_xxx_2:  Fetch addr_lo, RDM[7:0] ← mem, PC++
+S_xxx_2B: PC → REM (setup for addr_hi fetch)  ← NEW
+S_xxx_2C: Fetch addr_hi, RDM[15:8] ← mem, PC++ ← NEW
+S_xxx_3:  RDM → REM (set effective address)
+S_xxx_4:  Execute (read/write data)
+```
+
+### State Definitions (9-bit encoding for ~90 states)
 
 ```systemverilog
-typedef enum logic [5:0] {
+typedef enum logic [8:0] {
     // Fetch states
     S_FETCH_1,      // PC -> REM, initiate read
     S_FETCH_2,      // Read complete, load RDM
     S_FETCH_3,      // RDM -> RI, increment PC
     S_DECODE,       // Decode opcode
 
-    // LDA states
-    S_LDA_1,        // Fetch operand address
-    S_LDA_2,        // Load address to RDM
+    // LDA states (6 states for 16-bit address)
+    S_LDA_1,        // PC -> REM
+    S_LDA_2,        // Fetch addr_lo to RDM[7:0], PC++
+    S_LDA_2B,       // PC -> REM (for addr_hi)
+    S_LDA_2C,       // Fetch addr_hi to RDM[15:8], PC++
     S_LDA_3,        // RDM -> REM
     S_LDA_4,        // Read data to AC
 
-    // STA states
-    S_STA_1,        // Fetch operand address
-    S_STA_2,        // Load address to RDM
-    S_STA_3,        // RDM -> REM
-    S_STA_4,        // Write AC to memory
+    // STA states (6 states for 16-bit address)
+    S_STA_1, S_STA_2, S_STA_2B, S_STA_2C, S_STA_3, S_STA_4,
 
-    // ADD/AND/OR states (similar pattern)
-    S_ADD_1, S_ADD_2, S_ADD_3, S_ADD_4,
-    S_AND_1, S_AND_2, S_AND_3, S_AND_4,
-    S_OR_1,  S_OR_2,  S_OR_3,  S_OR_4,
+    // ADD/SUB/AND/OR/XOR states (6 states each)
+    S_ADD_1, S_ADD_2, S_ADD_2B, S_ADD_2C, S_ADD_3, S_ADD_4,
+    S_SUB_1, S_SUB_2, S_SUB_2B, S_SUB_2C, S_SUB_3, S_SUB_4,
+    S_AND_1, S_AND_2, S_AND_2B, S_AND_2C, S_AND_3, S_AND_4,
+    S_OR_1,  S_OR_2,  S_OR_2B,  S_OR_2C,  S_OR_3,  S_OR_4,
+    S_XOR_1, S_XOR_2, S_XOR_2B, S_XOR_2C, S_XOR_3, S_XOR_4,
 
-    // NOT state
-    S_NOT,          // Single cycle operation
+    // Jump states (6 states each for 16-bit target address)
+    S_JMP_1, S_JMP_2, S_JMP_2B, S_JMP_2C, S_JMP_3, S_JMP_4,
+    S_JN_1,  S_JN_2,  S_JN_2B,  S_JN_2C,  S_JN_3,  S_JN_4,
+    S_JZ_1,  S_JZ_2,  S_JZ_2B,  S_JZ_2C,  S_JZ_3,  S_JZ_4,
+    S_JNZ_1, S_JNZ_2, S_JNZ_2B, S_JNZ_2C, S_JNZ_3, S_JNZ_4,
 
-    // Jump states
-    S_JMP_1, S_JMP_2, S_JMP_3,
-    S_JN_1,  S_JN_2,  S_JN_3,
-    S_JZ_1,  S_JZ_2,  S_JZ_3,
-    S_JNZ_1, S_JNZ_2, S_JNZ_3,
+    // CALL states (9 states: fetch addr + push 16-bit return addr + jump)
+    S_CALL_1, S_CALL_2, S_CALL_2B, S_CALL_2C,  // Fetch 16-bit target
+    S_CALL_3, S_CALL_4,                         // Push PC high byte
+    S_CALL_5, S_CALL_6,                         // Push PC low byte
+    S_CALL_7,                                   // Load PC with target
 
-    // Extended instructions
+    // RET states (6 states: pop 16-bit return address)
+    S_RET_1, S_RET_2,  // Pop PC low byte
+    S_RET_3, S_RET_4,  // Pop PC high byte
+    S_RET_5, S_RET_6,  // Load PC
+
+    // Stack operations
+    S_PUSH_1, S_PUSH_2, S_PUSH_3,
+    S_POP_1,  S_POP_2,  S_POP_3,
+
+    // PUSH_FP (6 states: push 16-bit FP)
+    S_PUSH_FP_1, S_PUSH_FP_2, S_PUSH_FP_3,  // Push FP low byte
+    S_PUSH_FP_4, S_PUSH_FP_5, S_PUSH_FP_6,  // Push FP high byte
+
+    // POP_FP (6 states: pop 16-bit FP)
+    S_POP_FP_1, S_POP_FP_2, S_POP_FP_3,     // Pop FP low byte
+    S_POP_FP_4, S_POP_FP_5, S_POP_FP_6,     // Pop FP high byte
+
+    // Single-cycle operations
+    S_NOT, S_INC, S_DEC, S_SHL, S_SHR, S_ASR, S_NEG,
+    S_TAX, S_TXA, S_INX, S_TAY, S_TYA, S_INY,
+    S_TSF, S_TFS, S_MUL, S_DIV, S_MOD,
+
+    // Immediate/IO operations (2-byte, no change)
     S_LDI_1, S_LDI_2,
     S_IN_1,  S_IN_2,  S_IN_3,
     S_OUT_1, S_OUT_2, S_OUT_3,
@@ -463,64 +639,103 @@ typedef enum logic [5:0] {
 } state_t;
 ```
 
-### Instruction Execution Cycles
+### Instruction Execution Cycles (16-bit Addressing)
 
 #### FETCH Cycle (All Instructions)
 
 ```
-S_FETCH_1: addr_sel_pc=1, rem_load=1, mem_read=1
-S_FETCH_2: mem_read=1, rdm_load=1
-S_FETCH_3: ri_load=1, pc_inc=1
+S_FETCH_1: addr_sel=01(PC), rem_load=1, mem_read=1  ; PC -> REM
+S_FETCH_2: mem_read=1, rdm_load=1                   ; Read opcode to RDM
+S_FETCH_3: ri_load=1, pc_inc=1                      ; RDM -> RI, PC++
 S_DECODE:  (decode opcode)
 ```
 
-#### LDA (Load Accumulator)
+#### LDA (Load Accumulator) - 6 states for 16-bit address
 
 ```
-S_LDA_1: addr_sel_pc=1, rem_load=1, mem_read=1  ; Fetch address byte
-S_LDA_2: mem_read=1, rdm_load=1, pc_inc=1       ; Load address to RDM
-S_LDA_3: addr_sel_pc=0, rem_load=1, mem_read=1  ; RDM -> REM
-S_LDA_4: mem_read=1, ac_load=1, nz_load=1       ; Load data to AC
+S_LDA_1:  addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM
+S_LDA_2:  mem_read=1, rdm_load=1, pc_inc=1          ; Fetch addr_lo to RDM[7:0], PC++
+S_LDA_2B: addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM (for addr_hi)
+S_LDA_2C: mem_read=1, rdm_load_hi=1, pc_inc=1       ; Fetch addr_hi to RDM[15:8], PC++
+S_LDA_3:  addr_sel=00(RDM), rem_load=1, mem_read=1  ; RDM(16-bit) -> REM
+S_LDA_4:  mem_read=1, ac_load=1, nzc_load=1         ; Read data to AC
 ```
 
-#### STA (Store Accumulator)
+#### STA (Store Accumulator) - 6 states for 16-bit address
 
 ```
-S_STA_1: addr_sel_pc=1, rem_load=1, mem_read=1  ; Fetch address byte
-S_STA_2: mem_read=1, rdm_load=1, pc_inc=1       ; Load address to RDM
-S_STA_3: addr_sel_pc=0, rem_load=1              ; RDM -> REM
-S_STA_4: mem_write=1                            ; Write AC to memory
+S_STA_1:  addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM
+S_STA_2:  mem_read=1, rdm_load=1, pc_inc=1          ; Fetch addr_lo to RDM[7:0], PC++
+S_STA_2B: addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM (for addr_hi)
+S_STA_2C: mem_read=1, rdm_load_hi=1, pc_inc=1       ; Fetch addr_hi to RDM[15:8], PC++
+S_STA_3:  addr_sel=00(RDM), rem_load=1              ; RDM(16-bit) -> REM
+S_STA_4:  mem_write=1                               ; Write AC to memory
 ```
 
-#### ADD/AND/OR (Arithmetic/Logic)
+#### ADD/AND/OR/SUB/XOR (Arithmetic/Logic) - 6 states each
 
 ```
-S_xxx_1: addr_sel_pc=1, rem_load=1, mem_read=1  ; Fetch address byte
-S_xxx_2: mem_read=1, rdm_load=1, pc_inc=1       ; Load address to RDM
-S_xxx_3: addr_sel_pc=0, rem_load=1, mem_read=1  ; RDM -> REM
-S_xxx_4: mem_read=1, ac_load=1, alu_op=xx, nz_load=1  ; Perform operation
+S_xxx_1:  addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM
+S_xxx_2:  mem_read=1, rdm_load=1, pc_inc=1          ; Fetch addr_lo, PC++
+S_xxx_2B: addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM (for addr_hi)
+S_xxx_2C: mem_read=1, rdm_load_hi=1, pc_inc=1       ; Fetch addr_hi, PC++
+S_xxx_3:  addr_sel=00(RDM), rem_load=1, mem_read=1  ; RDM -> REM
+S_xxx_4:  mem_read=1, ac_load=1, alu_op=xxx, nzc_load=1 ; Perform operation
 ```
 
-#### NOT
+#### NOT (Single-cycle, no address fetch)
 
 ```
-S_NOT: ac_load=1, alu_op=2'b11, nz_load=1       ; Single cycle
+S_NOT: ac_load=1, alu_op=NOT, nzc_load=1            ; Single cycle
 ```
 
-#### JMP (Unconditional Jump)
+#### JMP (Unconditional Jump) - 6 states for 16-bit target
 
 ```
-S_JMP_1: addr_sel_pc=1, rem_load=1, mem_read=1  ; Fetch address byte
-S_JMP_2: mem_read=1, rdm_load=1                 ; Load address to RDM
-S_JMP_3: pc_load=1                              ; RDM -> PC
+S_JMP_1:  addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM
+S_JMP_2:  mem_read=1, rdm_load=1, pc_inc=1          ; Fetch addr_lo to RDM[7:0]
+S_JMP_2B: addr_sel=01(PC), rem_load=1, mem_read=1   ; PC -> REM (for addr_hi)
+S_JMP_2C: mem_read=1, rdm_load_hi=1                 ; Fetch addr_hi to RDM[15:8]
+S_JMP_3:  pc_load=1                                 ; Load 16-bit RDM -> PC
+S_JMP_4:  (return to FETCH)
 ```
 
-#### JN/JZ (Conditional Jumps)
+#### JN/JZ/JNZ (Conditional Jumps) - 6 states for 16-bit target
 
 ```
-S_Jx_1: addr_sel_pc=1, rem_load=1, mem_read=1   ; Fetch address byte
-S_Jx_2: mem_read=1, rdm_load=1                  ; Load address to RDM
-S_Jx_3: if(condition) pc_load=1 else pc_inc=1   ; Conditional branch
+S_Jx_1:  addr_sel=01(PC), rem_load=1, mem_read=1    ; PC -> REM
+S_Jx_2:  mem_read=1, rdm_load=1, pc_inc=1           ; Fetch addr_lo
+S_Jx_2B: addr_sel=01(PC), rem_load=1, mem_read=1    ; PC -> REM (for addr_hi)
+S_Jx_2C: mem_read=1, rdm_load_hi=1, pc_inc=1        ; Fetch addr_hi, PC++
+S_Jx_3:  if(condition) pc_load=1                    ; Conditional load PC
+S_Jx_4:  (return to FETCH)
+```
+
+#### CALL (9 states: fetch 16-bit addr + push 16-bit PC + jump)
+
+```
+S_CALL_1:  addr_sel=01(PC), rem_load=1, mem_read=1  ; PC -> REM
+S_CALL_2:  mem_read=1, rdm_load=1, pc_inc=1         ; Fetch target addr_lo
+S_CALL_2B: addr_sel=01(PC), rem_load=1, mem_read=1  ; PC -> REM
+S_CALL_2C: mem_read=1, rdm_load_hi=1, pc_inc=1      ; Fetch target addr_hi
+S_CALL_3:  sp_dec=1                                 ; SP--
+S_CALL_4:  addr_sel=10(SP), rem_load=1, mem_write=1 ; Push PC high byte
+           mem_data_sel=PC_HI
+S_CALL_5:  sp_dec=1                                 ; SP--
+S_CALL_6:  addr_sel=10(SP), rem_load=1, mem_write=1 ; Push PC low byte
+           mem_data_sel=PC_LO
+S_CALL_7:  pc_load=1                                ; PC <- RDM (16-bit target)
+```
+
+#### RET (6 states: pop 16-bit return address)
+
+```
+S_RET_1:  addr_sel=10(SP), rem_load=1, mem_read=1   ; SP -> REM
+S_RET_2:  mem_read=1, rdm_load=1, sp_inc=1          ; Pop PC low byte, SP++
+S_RET_3:  addr_sel=10(SP), rem_load=1, mem_read=1   ; SP -> REM
+S_RET_4:  mem_read=1, rdm_load_hi=1, sp_inc=1       ; Pop PC high byte, SP++
+S_RET_5:  pc_load=1                                 ; PC <- RDM (16-bit)
+S_RET_6:  (return to FETCH)
 ```
 
 ### Control Unit Implementation
@@ -589,21 +804,30 @@ endmodule
 
 ## Module Implementation
 
-### Module Hierarchy
+### Module Hierarchy (16-bit Addressing)
 
 ```
-cpu_top
-├── neander_datapath
-│   ├── pc_reg
-│   ├── mux_pc_rdm
-│   ├── generic_reg (REM)
-│   ├── generic_reg (RDM)
-│   ├── generic_reg (RI)
-│   ├── generic_reg (AC)
-│   ├── neander_alu
-│   └── nz_reg
-├── neander_control
-└── ram_256x8 (external)
+tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
+├── cpu_top (top_cpu_neander_x.sv)
+│   ├── neander_datapath (neander_x_datapath.sv)
+│   │   ├── pc_reg (16-bit Program Counter)
+│   │   ├── sp_reg (16-bit Stack Pointer, reset=0x00FF)
+│   │   ├── fp_reg (16-bit Frame Pointer)
+│   │   ├── rdm_reg (16-bit, separate lo/hi loading)
+│   │   ├── mux_addr (3-way, 16-bit: PC/RDM/SP)
+│   │   ├── generic_reg_16 (REM - 16-bit)
+│   │   ├── generic_reg (RI, AC - 8-bit)
+│   │   ├── x_reg (8-bit X index)
+│   │   ├── y_reg (8-bit Y index)
+│   │   ├── neander_alu (ADD, ADC, SUB, SBC, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, ASR, NEG)
+│   │   └── nzc_reg (N, Z, C Flags)
+│   └── neander_control (neander_x_control_unit.sv - FSM ~90 states, 9-bit encoding)
+│
+└── spi_memory_controller (spi_memory_controller.sv)
+    ├── SPI Master interface (to external SRAM)
+    ├── 16-bit address support (addr[15:0])
+    ├── 8-state FSM (IDLE → CMD → ADDR_HI → ADDR_LO → DATA → DONE)
+    └── ~70 CPU cycles per memory access
 ```
 
 ### Generic Register Module
@@ -625,45 +849,69 @@ module generic_reg (
 endmodule
 ```
 
-### Top-Level CPU Module
+### Top-Level CPU Module (16-bit Addressing)
 
 ```systemverilog
 module cpu_top (
-    input  logic       clk,
-    input  logic       reset,
+    input  logic        clk,
+    input  logic        reset,
 
-    // Memory Interface
-    output logic [7:0] mem_addr,
-    output logic [7:0] mem_data_out,
-    input  logic [7:0] mem_data_in,
-    output logic       mem_write,
+    // Memory Interface (16-bit address)
+    output logic [15:0] mem_addr,       // 16-bit address
+    output logic [7:0]  mem_data_out,   // 8-bit data
+    input  logic [7:0]  mem_data_in,
+    output logic        mem_write,
+    output logic        mem_read,
+    output logic        mem_req,
+    input  logic        mem_ready,
 
-    // Debug outputs
-    output logic [7:0] dbg_pc,
-    output logic [7:0] dbg_ac,
-    output logic [7:0] dbg_ri
+    // I/O Interface
+    input  logic [7:0]  io_in,
+    output logic        io_write,
+
+    // Debug outputs (16-bit for address registers)
+    output logic [15:0] dbg_pc,         // 16-bit PC
+    output logic [15:0] dbg_sp,         // 16-bit SP
+    output logic [15:0] dbg_fp,         // 16-bit FP
+    output logic [7:0]  dbg_ac,
+    output logic [7:0]  dbg_ri,
+    output logic        halt
 );
     // Internal signals
-    logic       mem_read;
-    logic       pc_inc, pc_load;
-    logic       ac_load, ri_load, rem_load, rdm_load, nz_load;
-    logic       addr_sel_pc;
-    logic [1:0] alu_op;
-    logic [3:0] opcode;
-    logic       flagN, flagZ;
+    logic        pc_inc, pc_load;
+    logic        ac_load, ri_load, rem_load;
+    logic        rdm_load, rdm_load_hi;    // Separate lo/hi loading
+    logic        nzc_load;
+    logic [1:0]  addr_sel;                 // 3-way mux
+    logic [3:0]  alu_op;
+    logic [7:0]  opcode;
+    logic        flagN, flagZ, flagC;
+    logic        sp_inc, sp_dec;
+    logic        fp_load, fp_load_lo, fp_load_hi;  // FP loading signals
 
     // Datapath instantiation
     neander_datapath dp (
         .clk(clk),
         .reset(reset),
-        // ... port connections
+        .mem_addr(mem_addr),            // 16-bit
+        .rdm_load_hi(rdm_load_hi),      // NEW
+        .fp_load_lo(fp_load_lo),        // NEW
+        .fp_load_hi(fp_load_hi),        // NEW
+        .dbg_pc(dbg_pc),                // 16-bit
+        .dbg_sp(dbg_sp),                // 16-bit
+        .dbg_fp(dbg_fp),                // 16-bit
+        // ... other port connections
     );
 
-    // Control unit instantiation
+    // Control unit instantiation (9-bit state encoding)
     neander_control uc (
         .clk(clk),
         .reset(reset),
-        // ... port connections
+        .rdm_load_hi(rdm_load_hi),      // NEW
+        .fp_load_lo(fp_load_lo),        // NEW
+        .fp_load_hi(fp_load_hi),        // NEW
+        .flagC(flagC),                  // Carry flag
+        // ... other port connections
     );
 endmodule
 ```
@@ -766,7 +1014,7 @@ endmodule
 
 ## Example Programs
 
-### Program 1: Addition (X + Y = Z)
+### Program 1: Addition (X + Y = Z) - 16-bit Addressing
 
 ```assembly
 ; Add two numbers and store result
@@ -781,30 +1029,37 @@ endmodule
         STA  Z          ; MEM[Z] = AC
         HLT             ; Stop
 
-X:      .data 0x80
-Y:      .data 0x81
-Z:      .data 0x82
+X:      .equ 0x0080     ; 16-bit address
+Y:      .equ 0x0081
+Z:      .equ 0x0082
 ```
 
-**Machine Code:**
+**Machine Code (16-bit addressing - 3 bytes for memory ops):**
 ```
 Address  Data    Instruction
-0x00     0xE0    LDI
-0x01     0x0A    10
-0x02     0x10    STA
-0x03     0x80    X
-0x04     0xE0    LDI
-0x05     0x14    20
-0x06     0x10    STA
-0x07     0x81    Y
-0x08     0x20    LDA
-0x09     0x80    X
-0x0A     0x30    ADD
-0x0B     0x81    Y
-0x0C     0x10    STA
-0x0D     0x82    Z
-0x0E     0xF0    HLT
+0x0000   0xE0    LDI 10
+0x0001   0x0A    ; immediate value
+0x0002   0x10    STA 0x0080
+0x0003   0x80    ; addr_lo
+0x0004   0x00    ; addr_hi
+0x0005   0xE0    LDI 20
+0x0006   0x14    ; immediate value
+0x0007   0x10    STA 0x0081
+0x0008   0x81    ; addr_lo
+0x0009   0x00    ; addr_hi
+0x000A   0x20    LDA 0x0080
+0x000B   0x80    ; addr_lo
+0x000C   0x00    ; addr_hi
+0x000D   0x30    ADD 0x0081
+0x000E   0x81    ; addr_lo
+0x000F   0x00    ; addr_hi
+0x0010   0x10    STA 0x0082
+0x0011   0x82    ; addr_lo
+0x0012   0x00    ; addr_hi
+0x0013   0xF0    HLT
 ```
+
+**Note:** Memory operations now use 3 bytes: `[opcode] [addr_lo] [addr_hi]`. This little-endian format allows full 64KB addressing.
 
 ### Program 2: Count Down Loop
 

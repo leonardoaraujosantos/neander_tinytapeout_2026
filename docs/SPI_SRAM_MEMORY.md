@@ -6,12 +6,15 @@ This document describes the SPI SRAM protocol used by the Neander-X CPU for exte
 
 SPI SRAM (Serial Peripheral Interface Static RAM) provides a simple 4-wire interface to access memory, making it ideal for pin-constrained designs like TinyTapeout.
 
+**NEANDER-X uses 16-bit addressing**, enabling the full **64KB address space** of SPI SRAM chips like the 23LC512.
+
 ```
 ┌─────────────┐                    ┌─────────────┐
 │             │      CS_N ────────►│             │
 │  Neander-X  │      SCLK ────────►│  SPI SRAM   │
 │     CPU     │      MOSI ────────►│   (64KB)    │
-│             │      MISO ◄────────│             │
+│  (16-bit    │      MISO ◄────────│             │
+│  addressing)│                    │             │
 └─────────────┘                    └─────────────┘
      Master                            Slave
 ```
@@ -260,14 +263,21 @@ TinyTapeout ASIC                          23LC512 SPI SRAM
 |--------|-------|
 | SPI Clock | CPU_CLK / 2 |
 | Bits per byte | 8 |
-| Bytes per access | 4 (cmd + 2 addr + data) |
+| Bytes per access | 4 (cmd + 2 addr bytes + data) |
 | Cycles per access | ~70 CPU cycles |
 | Effective bandwidth | ~1 byte per 70 cycles |
+| Address Space | **64KB (16-bit addressing)** |
 
 At 10MHz CPU clock:
 - SPI clock = 5MHz
 - Memory access time = 7us per byte
-- Instruction fetch = ~14-21us (2-3 bytes per instruction)
+- Instruction fetch = ~7us (opcode only)
+- Memory operation (16-bit addr) = ~21us (3 fetches: opcode + addr_lo + addr_hi)
+
+**16-bit Address Format:**
+The CPU sends addresses in big-endian order over SPI (high byte first), matching the SPI SRAM protocol:
+- ADDR_H (bits 15:8) sent first
+- ADDR_L (bits 7:0) sent second
 
 ## Related Documentation
 
