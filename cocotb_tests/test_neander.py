@@ -5829,3 +5829,545 @@ async def test_fp_parameter_access(dut):
     dut._log.info(f"FP parameter access test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"FP parameter access failed"
     dut._log.info("Test PASSED!")
+
+
+# =============================================================================
+# 16-BIT ADDRESSING SPECIFIC TESTS
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# HIGH ADDRESS TESTS (addresses > 0xFF)
+# -----------------------------------------------------------------------------
+
+@cocotb.test()
+async def test_high_address_data_0x1000(dut):
+    """Test reading data from high address 0x1000"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Load data at high address 0x1000
+    await tb.load_byte(0x1000, 0xAB)
+
+    # Program to load from 0x1000 (manually constructed 16-bit format)
+    # LDA 0x1000, OUT 0, HLT
+    program = [
+        0x20, 0x00, 0x10,  # LDA 0x1000 (little-endian: addr_lo=0x00, addr_hi=0x10)
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=10000)
+    dut._log.info(f"High address 0x1000 test: result=0x{result:02X}, expected=0xAB")
+    assert result == 0xAB, f"Expected 0xAB, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_high_address_data_0x8000(dut):
+    """Test reading data from high address 0x8000 (32KB boundary)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Load data at high address 0x8000
+    await tb.load_byte(0x8000, 0xCD)
+
+    # Program to load from 0x8000
+    program = [
+        0x20, 0x00, 0x80,  # LDA 0x8000 (little-endian)
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=10000)
+    dut._log.info(f"High address 0x8000 test: result=0x{result:02X}, expected=0xCD")
+    assert result == 0xCD, f"Expected 0xCD, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_high_address_data_0xFFF0(dut):
+    """Test reading data from near-maximum address 0xFFF0"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Load data at high address 0xFFF0
+    await tb.load_byte(0xFFF0, 0xEF)
+
+    # Program to load from 0xFFF0
+    program = [
+        0x20, 0xF0, 0xFF,  # LDA 0xFFF0 (little-endian)
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=10000)
+    dut._log.info(f"High address 0xFFF0 test: result=0x{result:02X}, expected=0xEF")
+    assert result == 0xEF, f"Expected 0xEF, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_high_address_store_0x2000(dut):
+    """Test storing data to high address 0x2000"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: LDI 0x77, STA 0x2000, LDA 0x2000, OUT 0, HLT
+    program = [
+        0xE0, 0x77,        # LDI 0x77
+        0x10, 0x00, 0x20,  # STA 0x2000
+        0x20, 0x00, 0x20,  # LDA 0x2000 (verify by reading back)
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=15000)
+    dut._log.info(f"High address store 0x2000 test: result=0x{result:02X}, expected=0x77")
+    assert result == 0x77, f"Expected 0x77, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_high_address_jump_0x1000(dut):
+    """Test jumping to code at high address 0x1000"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Main program at 0x0000: Jump to 0x1000
+    main_program = [
+        0x80, 0x00, 0x10,  # JMP 0x1000
+        0xF0,              # HLT (should not reach here)
+    ]
+    await tb.load_program(main_program, convert_to_16bit=False)
+
+    # Subroutine at 0x1000: LDI 0x99, OUT 0, HLT
+    sub_program = [
+        0xE0, 0x99,        # LDI 0x99
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    for i, byte in enumerate(sub_program):
+        await tb.load_byte(0x1000 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=10000)
+    dut._log.info(f"High address jump 0x1000 test: result=0x{result:02X}, expected=0x99")
+    assert result == 0x99, f"Expected 0x99, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_high_address_call_ret_0x2000(dut):
+    """Test CALL/RET with subroutine at high address 0x2000"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Main program at 0x0000
+    main_program = [
+        0xE0, 0x11,        # LDI 0x11
+        0x72, 0x00, 0x20,  # CALL 0x2000
+        0xD0, 0x00,        # OUT 0 (output result after return)
+        0xF0,              # HLT
+    ]
+    await tb.load_program(main_program, convert_to_16bit=False)
+
+    # Subroutine at 0x2000: Add 0x22 to AC and return
+    # Need data for ADD at some address, use 0x2010
+    await tb.load_byte(0x2010, 0x22)  # Data for ADD
+
+    sub_program = [
+        0x30, 0x10, 0x20,  # ADD 0x2010 (AC = 0x11 + 0x22 = 0x33)
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(sub_program):
+        await tb.load_byte(0x2000 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=15000)
+    expected = 0x11 + 0x22
+    dut._log.info(f"High address CALL/RET test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+# -----------------------------------------------------------------------------
+# PAGE BOUNDARY CROSSING TESTS
+# -----------------------------------------------------------------------------
+
+@cocotb.test()
+async def test_page_boundary_data_0xFF_0x100(dut):
+    """Test reading data that crosses page boundary (0xFF and 0x100)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Load data at page boundary
+    await tb.load_byte(0x00FF, 0xAA)
+    await tb.load_byte(0x0100, 0xBB)
+
+    # Program: Read both values, add them, output result
+    program = [
+        0x20, 0xFF, 0x00,  # LDA 0x00FF
+        0x10, 0x50, 0x00,  # STA 0x0050 (temp storage)
+        0x20, 0x00, 0x01,  # LDA 0x0100
+        0x30, 0x50, 0x00,  # ADD 0x0050 (AC = 0xAA + 0xBB = 0x165, truncated to 0x65)
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=20000)
+    expected = (0xAA + 0xBB) & 0xFF  # 0x65 with overflow
+    dut._log.info(f"Page boundary data test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_page_boundary_jump_0xFF_to_0x100(dut):
+    """Test jumping across page boundary from 0xFF area to 0x100"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Main program jumps to code at 0x0100
+    main_program = [
+        0x80, 0x00, 0x01,  # JMP 0x0100
+        0xF0,              # HLT (should not reach)
+    ]
+    await tb.load_program(main_program, convert_to_16bit=False)
+
+    # Code at 0x0100
+    code_at_100 = [
+        0xE0, 0x42,        # LDI 0x42
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    for i, byte in enumerate(code_at_100):
+        await tb.load_byte(0x0100 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=10000)
+    dut._log.info(f"Page boundary jump test: result=0x{result:02X}, expected=0x42")
+    assert result == 0x42, f"Expected 0x42, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_page_boundary_sequential_access(dut):
+    """Test sequential memory access across page boundary using indexed addressing"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set up data array crossing page boundary: 0xFE, 0xFF, 0x100, 0x101
+    await tb.load_byte(0x00FE, 0x10)
+    await tb.load_byte(0x00FF, 0x20)
+    await tb.load_byte(0x0100, 0x30)
+    await tb.load_byte(0x0101, 0x40)
+
+    # Simplified test: Read all 4 bytes without a loop (cleaner for verification)
+    # Use X register indexing to cross page boundary
+    program = [
+        0x7C, 0x00,        # 0x00: LDXI 0
+        0x21, 0xFE, 0x00,  # 0x02: LDA,X 0x00FE (loads from 0x00FE = 0x10)
+        0x10, 0x50, 0x00,  # 0x05: STA 0x0050 (sum = 0x10)
+        0x7C, 0x01,        # 0x08: LDXI 1
+        0x21, 0xFE, 0x00,  # 0x0A: LDA,X 0x00FE (loads from 0x00FF = 0x20)
+        0x30, 0x50, 0x00,  # 0x0D: ADD 0x0050 (AC = 0x30)
+        0x10, 0x50, 0x00,  # 0x10: STA 0x0050 (sum = 0x30)
+        0x7C, 0x02,        # 0x13: LDXI 2
+        0x21, 0xFE, 0x00,  # 0x15: LDA,X 0x00FE (loads from 0x0100 = 0x30, crosses page!)
+        0x30, 0x50, 0x00,  # 0x18: ADD 0x0050 (AC = 0x60)
+        0x10, 0x50, 0x00,  # 0x1B: STA 0x0050 (sum = 0x60)
+        0x7C, 0x03,        # 0x1E: LDXI 3
+        0x21, 0xFE, 0x00,  # 0x20: LDA,X 0x00FE (loads from 0x0101 = 0x40)
+        0x30, 0x50, 0x00,  # 0x23: ADD 0x0050 (AC = 0xA0)
+        0xD0, 0x00,        # 0x26: OUT 0
+        0xF0,              # 0x28: HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=50000)
+    expected = 0x10 + 0x20 + 0x30 + 0x40  # 0xA0
+    dut._log.info(f"Page boundary sequential test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_page_boundary_call_return(dut):
+    """Test CALL with return address near page boundary"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Simpler approach: Start code at 0x0000, call subroutine at high address,
+    # verify return works correctly
+    # Main code at 0x0000
+    main_code = [
+        0xE0, 0x55,        # 0x00: LDI 0x55
+        0x72, 0x00, 0x01,  # 0x02: CALL 0x0100 (subroutine at page 1)
+        0xD0, 0x00,        # 0x05: OUT 0 (after return)
+        0xF0,              # 0x07: HLT
+    ]
+    await tb.load_program(main_code, convert_to_16bit=False)
+
+    # Subroutine at 0x0100 (page 1): increment AC and return
+    sub_code = [
+        0x75,              # INC (AC = AC + 1)
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(sub_code):
+        await tb.load_byte(0x0100 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=15000)
+    expected = 0x56  # 0x55 + 1
+    dut._log.info(f"Page boundary CALL/RET test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+# -----------------------------------------------------------------------------
+# SPI TIMING EDGE CASE TESTS
+# -----------------------------------------------------------------------------
+
+@cocotb.test()
+async def test_spi_back_to_back_reads(dut):
+    """Test back-to-back memory reads (SPI timing stress test)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set up consecutive data
+    await tb.load_byte(0x0080, 0x11)
+    await tb.load_byte(0x0081, 0x22)
+    await tb.load_byte(0x0082, 0x33)
+    await tb.load_byte(0x0083, 0x44)
+
+    # Program: Read 4 consecutive addresses, sum them
+    program = [
+        0x20, 0x80, 0x00,  # LDA 0x0080
+        0x30, 0x81, 0x00,  # ADD 0x0081
+        0x30, 0x82, 0x00,  # ADD 0x0082
+        0x30, 0x83, 0x00,  # ADD 0x0083
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=20000)
+    expected = (0x11 + 0x22 + 0x33 + 0x44) & 0xFF  # 0xAA
+    dut._log.info(f"SPI back-to-back reads test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_spi_back_to_back_writes(dut):
+    """Test back-to-back memory writes (SPI timing stress test)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Program: Write to 4 consecutive addresses, then read back and sum
+    program = [
+        0xE0, 0x10,        # LDI 0x10
+        0x10, 0x80, 0x00,  # STA 0x0080
+        0xE0, 0x20,        # LDI 0x20
+        0x10, 0x81, 0x00,  # STA 0x0081
+        0xE0, 0x30,        # LDI 0x30
+        0x10, 0x82, 0x00,  # STA 0x0082
+        0xE0, 0x40,        # LDI 0x40
+        0x10, 0x83, 0x00,  # STA 0x0083
+        # Read back and sum
+        0x20, 0x80, 0x00,  # LDA 0x0080
+        0x30, 0x81, 0x00,  # ADD 0x0081
+        0x30, 0x82, 0x00,  # ADD 0x0082
+        0x30, 0x83, 0x00,  # ADD 0x0083
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=40000)
+    expected = (0x10 + 0x20 + 0x30 + 0x40) & 0xFF  # 0xA0
+    dut._log.info(f"SPI back-to-back writes test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_spi_interleaved_read_write(dut):
+    """Test interleaved read-write-read pattern (SPI state machine test)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Initial data
+    await tb.load_byte(0x0080, 0x05)
+
+    # Program: Read, modify, write, read pattern
+    program = [
+        0x20, 0x80, 0x00,  # LDA 0x0080 (read: AC = 0x05)
+        0x75,              # INC (AC = 0x06)
+        0x10, 0x81, 0x00,  # STA 0x0081 (write)
+        0x20, 0x81, 0x00,  # LDA 0x0081 (read back: AC = 0x06)
+        0x75,              # INC (AC = 0x07)
+        0x10, 0x82, 0x00,  # STA 0x0082 (write)
+        0x20, 0x82, 0x00,  # LDA 0x0082 (read back: AC = 0x07)
+        0x75,              # INC (AC = 0x08)
+        0x10, 0x83, 0x00,  # STA 0x0083 (write)
+        0x20, 0x83, 0x00,  # LDA 0x0083 (read back: AC = 0x08)
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=40000)
+    expected = 0x08
+    dut._log.info(f"SPI interleaved R/W test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_spi_rapid_address_changes(dut):
+    """Test rapid address changes across different memory regions"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set up data at widely separated addresses
+    await tb.load_byte(0x0010, 0x01)
+    await tb.load_byte(0x0100, 0x02)
+    await tb.load_byte(0x1000, 0x04)
+    await tb.load_byte(0x8000, 0x08)
+
+    # Program: Read from widely separated addresses and sum
+    program = [
+        0x20, 0x10, 0x00,  # LDA 0x0010
+        0x30, 0x00, 0x01,  # ADD 0x0100
+        0x30, 0x00, 0x10,  # ADD 0x1000
+        0x30, 0x00, 0x80,  # ADD 0x8000
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=25000)
+    expected = 0x01 + 0x02 + 0x04 + 0x08  # 0x0F
+    dut._log.info(f"SPI rapid address changes test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_spi_fetch_execute_interleave(dut):
+    """Test SPI behavior with instruction fetch interleaved with data access"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # This test has code and data at the same page to stress fetch/data interleaving
+    # Data at 0x0030-0x0033
+    await tb.load_byte(0x0030, 0x11)
+    await tb.load_byte(0x0031, 0x22)
+    await tb.load_byte(0x0032, 0x33)
+    await tb.load_byte(0x0033, 0x44)
+
+    # Program interleaves fetch and data access heavily
+    program = [
+        0x20, 0x30, 0x00,  # LDA 0x0030 (fetch 3 bytes, read 1 byte data)
+        0x10, 0x40, 0x00,  # STA 0x0040 (fetch 3 bytes, write 1 byte data)
+        0x20, 0x31, 0x00,  # LDA 0x0031
+        0x30, 0x40, 0x00,  # ADD 0x0040
+        0x10, 0x40, 0x00,  # STA 0x0040
+        0x20, 0x32, 0x00,  # LDA 0x0032
+        0x30, 0x40, 0x00,  # ADD 0x0040
+        0x10, 0x40, 0x00,  # STA 0x0040
+        0x20, 0x33, 0x00,  # LDA 0x0033
+        0x30, 0x40, 0x00,  # ADD 0x0040
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=50000)
+    expected = (0x11 + 0x22 + 0x33 + 0x44) & 0xFF  # 0xAA
+    dut._log.info(f"SPI fetch/execute interleave test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_spi_maximum_address_0xFFFF(dut):
+    """Test access to maximum possible address 0xFFFF"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Load data at maximum address
+    await tb.load_byte(0xFFFF, 0x7F)
+
+    # Program to read from 0xFFFF
+    program = [
+        0x20, 0xFF, 0xFF,  # LDA 0xFFFF
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=10000)
+    dut._log.info(f"SPI max address 0xFFFF test: result=0x{result:02X}, expected=0x7F")
+    assert result == 0x7F, f"Expected 0x7F, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_spi_address_wrap_around(dut):
+    """Test that address calculations don't wrap incorrectly"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Set up data near address boundaries
+    await tb.load_byte(0x00FE, 0xAA)
+    await tb.load_byte(0x00FF, 0xBB)
+    await tb.load_byte(0x0100, 0xCC)
+
+    # Use indexed addressing with X to access across boundary
+    # Base = 0x00FE, X = 0, 1, 2
+    program = [
+        0x7C, 0x00,        # LDXI 0
+        0x21, 0xFE, 0x00,  # LDA,X 0x00FE (loads 0xAA)
+        0x10, 0x50, 0x00,  # STA 0x0050
+        0x7C, 0x01,        # LDXI 1
+        0x21, 0xFE, 0x00,  # LDA,X 0x00FE (loads 0xBB from 0x00FF)
+        0x30, 0x50, 0x00,  # ADD 0x0050
+        0x10, 0x50, 0x00,  # STA 0x0050
+        0x7C, 0x02,        # LDXI 2
+        0x21, 0xFE, 0x00,  # LDA,X 0x00FE (loads 0xCC from 0x0100)
+        0x30, 0x50, 0x00,  # ADD 0x0050
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=40000)
+    expected = (0xAA + 0xBB + 0xCC) & 0xFF  # 0x65 with overflow
+    dut._log.info(f"SPI address wrap test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
