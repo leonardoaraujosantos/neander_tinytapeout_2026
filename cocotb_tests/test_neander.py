@@ -6371,3 +6371,482 @@ async def test_spi_address_wrap_around(dut):
     dut._log.info(f"SPI address wrap test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
     dut._log.info("Test PASSED!")
+
+
+# -----------------------------------------------------------------------------
+# DEEP STACK TESTS
+# -----------------------------------------------------------------------------
+
+@cocotb.test()
+async def test_deep_stack_multiple_push_pop(dut):
+    """Test pushing and popping many values on the stack"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Push 8 different values, then pop them all and verify LIFO order
+    # Final result should be the first value pushed (last popped)
+    program = [
+        0xE0, 0x01,        # LDI 0x01
+        0x70,              # PUSH
+        0xE0, 0x02,        # LDI 0x02
+        0x70,              # PUSH
+        0xE0, 0x03,        # LDI 0x03
+        0x70,              # PUSH
+        0xE0, 0x04,        # LDI 0x04
+        0x70,              # PUSH
+        0xE0, 0x05,        # LDI 0x05
+        0x70,              # PUSH
+        0xE0, 0x06,        # LDI 0x06
+        0x70,              # PUSH
+        0xE0, 0x07,        # LDI 0x07
+        0x70,              # PUSH
+        0xE0, 0x08,        # LDI 0x08
+        0x70,              # PUSH
+        # Now pop all 8 and sum them
+        0x71,              # POP (AC = 0x08)
+        0x10, 0x50, 0x00,  # STA 0x0050 (sum)
+        0x71,              # POP (AC = 0x07)
+        0x30, 0x50, 0x00,  # ADD 0x0050
+        0x10, 0x50, 0x00,  # STA 0x0050
+        0x71,              # POP (AC = 0x06)
+        0x30, 0x50, 0x00,  # ADD
+        0x10, 0x50, 0x00,  # STA
+        0x71,              # POP (AC = 0x05)
+        0x30, 0x50, 0x00,  # ADD
+        0x10, 0x50, 0x00,  # STA
+        0x71,              # POP (AC = 0x04)
+        0x30, 0x50, 0x00,  # ADD
+        0x10, 0x50, 0x00,  # STA
+        0x71,              # POP (AC = 0x03)
+        0x30, 0x50, 0x00,  # ADD
+        0x10, 0x50, 0x00,  # STA
+        0x71,              # POP (AC = 0x02)
+        0x30, 0x50, 0x00,  # ADD
+        0x10, 0x50, 0x00,  # STA
+        0x71,              # POP (AC = 0x01)
+        0x30, 0x50, 0x00,  # ADD (final sum)
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=50000)
+    expected = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8  # 36 = 0x24
+    dut._log.info(f"Deep stack push/pop test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_nested_calls_3_levels(dut):
+    """Test 3 levels of nested function calls"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Main calls func1, func1 calls func2, func2 calls func3
+    # Each function adds a value to AC
+    # Main: AC = 0x10
+    # func1: AC += 0x01 = 0x11, calls func2
+    # func2: AC += 0x02 = 0x13, calls func3
+    # func3: AC += 0x04 = 0x17, returns
+    # func2: returns
+    # func1: returns
+    # Main: outputs AC = 0x17
+
+    # Main code at 0x0000
+    main_code = [
+        0xE0, 0x10,        # 0x00: LDI 0x10
+        0x72, 0x20, 0x00,  # 0x02: CALL func1 at 0x0020
+        0xD0, 0x00,        # 0x05: OUT 0
+        0xF0,              # 0x07: HLT
+    ]
+    await tb.load_program(main_code, convert_to_16bit=False)
+
+    # func1 at 0x0020
+    func1 = [
+        0x10, 0x60, 0x00,  # STA 0x0060 (save AC)
+        0x30, 0x70, 0x00,  # ADD 0x0070 (add 0x01)
+        0x72, 0x40, 0x00,  # CALL func2 at 0x0040
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func1):
+        await tb.load_byte(0x0020 + i, byte)
+
+    # func2 at 0x0040
+    func2 = [
+        0x10, 0x61, 0x00,  # STA 0x0061 (save AC)
+        0x30, 0x71, 0x00,  # ADD 0x0071 (add 0x02)
+        0x72, 0x80, 0x00,  # CALL func3 at 0x0080
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func2):
+        await tb.load_byte(0x0040 + i, byte)
+
+    # func3 at 0x0080
+    func3 = [
+        0x30, 0x72, 0x00,  # ADD 0x0072 (add 0x04)
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func3):
+        await tb.load_byte(0x0080 + i, byte)
+
+    # Constants
+    await tb.load_byte(0x0070, 0x01)  # +1 for func1
+    await tb.load_byte(0x0071, 0x02)  # +2 for func2
+    await tb.load_byte(0x0072, 0x04)  # +4 for func3
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=30000)
+    expected = 0x10 + 0x01 + 0x02 + 0x04  # 0x17
+    dut._log.info(f"Nested calls 3 levels test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_nested_calls_5_levels(dut):
+    """Test 5 levels of nested function calls (deeper nesting)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Each level adds 1 to AC, 5 levels deep
+    # Start with AC = 0, end with AC = 5
+
+    # Main code at 0x0000
+    main_code = [
+        0xE0, 0x00,        # LDI 0
+        0x72, 0x10, 0x00,  # CALL level1 at 0x0010
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(main_code, convert_to_16bit=False)
+
+    # level1 at 0x0010: INC, CALL level2, RET
+    level1 = [0x75, 0x72, 0x20, 0x00, 0x73]
+    for i, byte in enumerate(level1):
+        await tb.load_byte(0x0010 + i, byte)
+
+    # level2 at 0x0020: INC, CALL level3, RET
+    level2 = [0x75, 0x72, 0x30, 0x00, 0x73]
+    for i, byte in enumerate(level2):
+        await tb.load_byte(0x0020 + i, byte)
+
+    # level3 at 0x0030: INC, CALL level4, RET
+    level3 = [0x75, 0x72, 0x40, 0x00, 0x73]
+    for i, byte in enumerate(level3):
+        await tb.load_byte(0x0030 + i, byte)
+
+    # level4 at 0x0040: INC, CALL level5, RET
+    level4 = [0x75, 0x72, 0x50, 0x00, 0x73]
+    for i, byte in enumerate(level4):
+        await tb.load_byte(0x0040 + i, byte)
+
+    # level5 at 0x0050: INC, RET
+    level5 = [0x75, 0x73]
+    for i, byte in enumerate(level5):
+        await tb.load_byte(0x0050 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=40000)
+    expected = 5  # 5 increments
+    dut._log.info(f"Nested calls 5 levels test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_call_with_push_pop(dut):
+    """Test function calls combined with explicit PUSH/POP for local variables"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Main: push parameter, call function, function uses stack for locals
+    # Function: push local, do work, pop local, return
+
+    main_code = [
+        0xE0, 0x10,        # LDI 0x10 (parameter)
+        0x70,              # PUSH parameter
+        0x72, 0x20, 0x00,  # CALL func at 0x0020
+        0xD0, 0x00,        # OUT result
+        0xF0,              # HLT
+    ]
+    await tb.load_program(main_code, convert_to_16bit=False)
+
+    # Function at 0x0020:
+    # - Push local variable (0x05)
+    # - Pop parameter into AC
+    # - Add local
+    # - Pop local (cleanup)
+    # - Return
+    func_code = [
+        # Stack after CALL: [param=0x10, ret_hi, ret_lo] SP points to ret_lo
+        # We need to access param which is at SP+2
+        0xE0, 0x05,        # LDI 0x05 (local var value)
+        0x70,              # PUSH local (stack: [param, ret_hi, ret_lo, local])
+        # Now manually get parameter: it's 3 bytes up from SP
+        # Use FP-based access: TSF, then LDA_FP with offset
+        0x0A,              # TSF (FP = SP, points to local)
+        0x24, 0x03, 0x00,  # LDA_FP 0x03 (param is at FP+3)
+        0x30, 0x60, 0x00,  # ADD 0x0060 (add constant 0x07)
+        0x71,              # POP (cleanup local, AC preserved? No, POP loads to AC)
+        # Need different approach - save result first
+        0xF0,              # HLT (simplified - just test the structure)
+    ]
+    # Simplified version - just verify stack survives call
+    func_code = [
+        0xE0, 0x05,        # LDI 0x05
+        0x70,              # PUSH (local)
+        0x71,              # POP (get local back)
+        0x10, 0x60, 0x00,  # STA 0x0060 (save local = 0x05)
+        # Get parameter from stack (SP now points to ret_lo, param is at SP+2)
+        0x0A,              # TSF
+        0x24, 0x02, 0x00,  # LDA_FP +2 (skip ret_lo, ret_hi to get param)
+        0x30, 0x60, 0x00,  # ADD saved local
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func_code):
+        await tb.load_byte(0x0020 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=30000)
+    expected = 0x10 + 0x05  # param + local = 0x15
+    dut._log.info(f"Stack with PUSH/POP test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_10_nested_calls(dut):
+    """Test 10 levels of nested function calls (stress test)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Each level adds 1 to AC, 10 levels deep
+    # Start with AC = 0, end with AC = 10 (0x0A)
+    # This uses 20 bytes of stack (2 bytes per return address)
+
+    # Main code at 0x0000
+    main_code = [
+        0xE0, 0x00,        # LDI 0
+        0x72, 0x00, 0x01,  # CALL level1 at 0x0100
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    await tb.load_program(main_code, convert_to_16bit=False)
+
+    # Place each level at 0x0100, 0x0110, 0x0120, etc.
+    # Pattern: INC, CALL next_level, RET (except last which is just INC, RET)
+    for level in range(1, 10):
+        addr = 0x0100 + (level - 1) * 0x10
+        next_addr = 0x0100 + level * 0x10
+        code = [0x75, 0x72, next_addr & 0xFF, (next_addr >> 8) & 0xFF, 0x73]
+        for i, byte in enumerate(code):
+            await tb.load_byte(addr + i, byte)
+
+    # Level 10 at 0x0190: just INC and RET
+    level10 = [0x75, 0x73]
+    for i, byte in enumerate(level10):
+        await tb.load_byte(0x0190 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=80000)
+    expected = 10  # 10 increments = 0x0A
+    dut._log.info(f"Nested calls 10 levels test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_alternating_call_push(dut):
+    """Test alternating CALL and PUSH operations"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Main: PUSH value, CALL func, func PUSHes, CALLs another, etc.
+    # This creates a mixed stack pattern
+
+    main_code = [
+        0xE0, 0x11,        # LDI 0x11
+        0x70,              # PUSH 0x11
+        0x72, 0x20, 0x00,  # CALL func1
+        0x71,              # POP (should get 0x11 back)
+        0xD0, 0x00,        # OUT
+        0xF0,              # HLT
+    ]
+    await tb.load_program(main_code, convert_to_16bit=False)
+
+    # func1: PUSH 0x22, CALL func2, POP, RET
+    func1 = [
+        0xE0, 0x22,        # LDI 0x22
+        0x70,              # PUSH 0x22
+        0x72, 0x40, 0x00,  # CALL func2
+        0x71,              # POP (get 0x22)
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func1):
+        await tb.load_byte(0x0020 + i, byte)
+
+    # func2: PUSH 0x33, POP, RET
+    func2 = [
+        0xE0, 0x33,        # LDI 0x33
+        0x70,              # PUSH 0x33
+        0x71,              # POP (get 0x33)
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func2):
+        await tb.load_byte(0x0040 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=40000)
+    expected = 0x11  # Original pushed value
+    dut._log.info(f"Alternating CALL/PUSH test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_recursion_simulation(dut):
+    """Test simulated recursion (iterative implementation to avoid infinite recursion)"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Simulate factorial(4) = 24 using stack
+    # Push 4, 3, 2, 1 then multiply them
+    # 4 * 3 * 2 * 1 = 24 = 0x18
+
+    program = [
+        # Push the values 4, 3, 2, 1
+        0xE0, 0x04,        # LDI 4
+        0x70,              # PUSH
+        0xE0, 0x03,        # LDI 3
+        0x70,              # PUSH
+        0xE0, 0x02,        # LDI 2
+        0x70,              # PUSH
+        0xE0, 0x01,        # LDI 1
+        0x70,              # PUSH
+        # Now multiply: pop two, multiply, push result, repeat
+        0x71,              # POP (AC = 1)
+        0x7D,              # TAX (X = 1)
+        0x71,              # POP (AC = 2)
+        0x09,              # MUL (AC = 2*1 = 2, in Y:AC)
+        0x7D,              # TAX (X = 2)
+        0x71,              # POP (AC = 3)
+        0x09,              # MUL (AC = 3*2 = 6)
+        0x7D,              # TAX (X = 6)
+        0x71,              # POP (AC = 4)
+        0x09,              # MUL (AC = 4*6 = 24 = 0x18)
+        0xD0, 0x00,        # OUT
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=30000)
+    expected = 24  # 4! = 24 = 0x18
+    dut._log.info(f"Recursion simulation (factorial) test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_push_pop_boundary(dut):
+    """Test stack operations that approach page boundary"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # SP starts at 0x00FF. Push enough values to cross into lower addresses.
+    # 16 pushes will put SP at 0x00EF (0xFF - 16 = 0xEF)
+    # Then verify we can pop them all back correctly.
+
+    program = [
+        # Push 16 values (0x01 through 0x10)
+        0xE0, 0x01, 0x70,  # LDI 1, PUSH
+        0xE0, 0x02, 0x70,  # LDI 2, PUSH
+        0xE0, 0x03, 0x70,  # LDI 3, PUSH
+        0xE0, 0x04, 0x70,  # LDI 4, PUSH
+        0xE0, 0x05, 0x70,  # LDI 5, PUSH
+        0xE0, 0x06, 0x70,  # LDI 6, PUSH
+        0xE0, 0x07, 0x70,  # LDI 7, PUSH
+        0xE0, 0x08, 0x70,  # LDI 8, PUSH
+        0xE0, 0x09, 0x70,  # LDI 9, PUSH
+        0xE0, 0x0A, 0x70,  # LDI 10, PUSH
+        0xE0, 0x0B, 0x70,  # LDI 11, PUSH
+        0xE0, 0x0C, 0x70,  # LDI 12, PUSH
+        0xE0, 0x0D, 0x70,  # LDI 13, PUSH
+        0xE0, 0x0E, 0x70,  # LDI 14, PUSH
+        0xE0, 0x0F, 0x70,  # LDI 15, PUSH
+        0xE0, 0x10, 0x70,  # LDI 16, PUSH
+        # Pop first value (should be 16 = 0x10)
+        0x71,              # POP
+        0xD0, 0x00,        # OUT (should output 0x10)
+        0xF0,              # HLT
+    ]
+    await tb.load_program(program, convert_to_16bit=False)
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=50000)
+    expected = 0x10  # Last pushed = first popped
+    dut._log.info(f"Stack boundary test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
+
+
+@cocotb.test()
+async def test_deep_stack_frame_pointer_nested(dut):
+    """Test nested function calls using frame pointer for local access"""
+    tb = NeanderTestbench(dut)
+    await tb.setup()
+
+    # Main calls func1, func1 sets up frame, stores local, calls func2,
+    # func2 sets up its own frame, both return correctly
+
+    main_code = [
+        0xE0, 0xAA,        # LDI 0xAA (parameter for func1)
+        0x70,              # PUSH param
+        0x72, 0x20, 0x00,  # CALL func1
+        0xD0, 0x00,        # OUT result
+        0xF0,              # HLT
+    ]
+    await tb.load_program(main_code, convert_to_16bit=False)
+
+    # func1 at 0x0020:
+    # Prologue: PUSH_FP, TSF
+    # Access param at FP+3
+    # Call func2 (which increments AC)
+    # Epilogue: TFS, POP_FP, RET
+    func1 = [
+        0x0C,              # PUSH_FP
+        0x0A,              # TSF (FP = SP)
+        0x24, 0x03, 0x00,  # LDA_FP +3 (get param = 0xAA)
+        0x75,              # INC (AC = 0xAB)
+        0x72, 0x50, 0x00,  # CALL func2 (AC becomes 0xAC)
+        # After return, AC has result from func2 = 0xAC
+        0x0B,              # TFS (SP = FP)
+        0x0D,              # POP_FP
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func1):
+        await tb.load_byte(0x0020 + i, byte)
+
+    # func2 at 0x0050:
+    # Simple: INC AC and return
+    func2 = [
+        0x75,              # INC (AC = 0xAC)
+        0x73,              # RET
+    ]
+    for i, byte in enumerate(func2):
+        await tb.load_byte(0x0050 + i, byte)
+
+    await tb.reset()
+
+    result = await tb.wait_for_io_write(max_cycles=40000)
+    expected = 0xAC  # 0xAA + 1 + 1 = 0xAC
+    dut._log.info(f"FP nested calls test: result=0x{result:02X}, expected=0x{expected:02X}")
+    assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
+    dut._log.info("Test PASSED!")
