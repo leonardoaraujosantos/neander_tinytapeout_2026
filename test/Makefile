@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = neander_x_alu.sv neander_x_datapath.sv neander_x_control_unit.sv top_cpu_neander_x.sv project.sv
+PROJECT_SOURCES = neander_x_alu.sv neander_x_datapath.sv neander_x_control_unit.sv top_cpu_neander_x.sv spi_memory_controller.sv spi_sram_model.sv project.sv
 
 ifneq ($(GATES),yes)
 
@@ -26,6 +26,9 @@ VERILOG_SOURCES += $(PDK_ROOT)/ihp-sg13g2/libs.ref/sg13g2_stdcell/verilog/sg13g2
 
 # this gets copied in by the GDS action workflow
 VERILOG_SOURCES += $(PWD)/gate_level_netlist.v
+
+# SPI SRAM model is a testbench component, needed for both RTL and GL simulation
+VERILOG_SOURCES += $(SRC_DIR)/spi_sram_model.sv
 
 endif
 

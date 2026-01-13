@@ -2,65 +2,105 @@
  * Copyright (c) 2024 Leonardo Araujo Santos
  * SPDX-License-Identifier: Apache-2.0
  *
- * Neander-X CPU for TinyTapeout
- * 8-bit educational processor compatible with UFRJ Neander-X
+ * Neander-X CPU for TinyTapeout with SPI Memory Interface
+ * 8-bit educational processor with 256 byte address space via SPI SRAM
  */
 
 `default_nettype none
 
 module tt_um_cpu_leonardoaraujosantos (
-    input  wire [7:0] ui_in,    // Dedicated inputs  -> io_in (keyboard/switches)
-    output wire [7:0] uo_out,   // Dedicated outputs -> io_out (display/LEDs)
-    input  wire [7:0] uio_in,   // IOs: Input path   -> [0]=io_status, [7:1]=unused
-    output wire [7:0] uio_out,  // IOs: Output path  -> dbg_pc (debug: program counter)
+    input  wire [7:0] ui_in,    // Dedicated inputs
+    output wire [7:0] uo_out,   // Dedicated outputs
+    input  wire [7:0] uio_in,   // IOs: Input path
+    output wire [7:0] uio_out,  // IOs: Output path
     output wire [7:0] uio_oe,   // IOs: Enable path (active high: 0=input, 1=output)
     input  wire       ena,      // always 1 when the design is powered
     input  wire       clk,      // clock
     input  wire       rst_n     // reset_n - low to reset
 );
 
-  // Internal signals for CPU <-> RAM interface
-  wire [7:0] mem_addr;
-  wire [7:0] mem_data_out;
-  wire [7:0] mem_data_in;
-  wire       mem_write;
-  wire       mem_read;
-
-  // Internal signals for CPU <-> I/O interface
-  wire [7:0] io_out_internal;
-  wire       io_write;
-
-  // Debug signals (directly from CPU, directly from debug interface)
-  wire [7:0] dbg_pc;
-  wire [7:0] dbg_ac;
-  wire [7:0] dbg_ri;
-  wire [7:0] dbg_sp;
-  wire [7:0] dbg_x;
-  wire [7:0] dbg_y;
-  wire [7:0] dbg_fp;
-
-  // I/O status directly from dedicated inputs (directly from software, directly from external)
-  // For now directly from zero (directly from unused, directly from placeholder)
-  wire [7:0] io_status = 8'b0;
+  // ============================================================================
+  // Pin Mapping for SPI Memory Interface
+  // ============================================================================
+  // uo_out[0] = SPI_CS_N   - Chip select (directly to SPI SRAM)
+  // uo_out[1] = SPI_SCLK   - Serial clock (directly to SPI SRAM)
+  // uo_out[2] = SPI_MOSI   - Master Out Slave In (directly to SPI SRAM)
+  // uo_out[3] = reserved (directly from debug)
+  // uo_out[4] = reserved (directly from debug)
+  // uo_out[5] = reserved (directly from debug)
+  // uo_out[6] = reserved (directly from debug)
+  // uo_out[7] = IO_WRITE   - I/O write strobe for external output latch
+  //
+  // ui_in[0]  = SPI_MISO   - Master In Slave Out (directly from SPI SRAM)
+  // ui_in[7:1]= io_in      - General purpose input (directly from switches/keyboard)
+  //
+  // uio[7:0]  = Debug outputs (directly from PC low byte and other debug)
+  // ============================================================================
 
   // Reset is active high internally, rst_n is active low
   wire reset = ~rst_n;
 
-  // CPU instantiation
+  // ============================================================================
+  // CPU <-> SPI Controller Interface
+  // ============================================================================
+  wire [7:0]  cpu_mem_addr;       // 8-bit addressing (256 byte space)
+  wire [7:0]  cpu_mem_data_out;
+  wire [7:0]  cpu_mem_data_in;
+  wire        cpu_mem_write;
+  wire        cpu_mem_read;
+  wire        cpu_mem_req;
+  wire        cpu_mem_ready;
+
+  // ============================================================================
+  // SPI Controller <-> External SPI SRAM Interface
+  // ============================================================================
+  wire        spi_cs_n;
+  wire        spi_sclk;
+  wire        spi_mosi;
+  wire        spi_miso;
+
+  // ============================================================================
+  // CPU <-> I/O Interface
+  // ============================================================================
+  wire [7:0]  io_out_internal;
+  wire        io_write;
+  wire [7:0]  io_in_cpu;
+  wire [7:0]  io_status;
+
+  // I/O input: use ui_in[7:1] for general I/O (ui_in[0] is SPI_MISO)
+  assign io_in_cpu = {ui_in[7:1], 1'b0};
+  assign io_status = 8'b0;  // Status register (unused for now)
+
+  // ============================================================================
+  // Debug signals
+  // ============================================================================
+  wire [7:0]  dbg_pc;
+  wire [7:0]  dbg_ac;
+  wire [7:0]  dbg_ri;
+  wire [7:0]  dbg_sp;
+  wire [7:0]  dbg_x;
+  wire [7:0]  dbg_y;
+  wire [7:0]  dbg_fp;
+
+  // ============================================================================
+  // CPU Instantiation
+  // ============================================================================
   cpu_top cpu (
     .clk(clk),
     .reset(reset),
 
-    // Memory interface (directly to external RAM)
-    .mem_addr(mem_addr),
-    .mem_data_out(mem_data_out),
-    .mem_data_in(mem_data_in),
-    .mem_write(mem_write),
-    .mem_read(mem_read),
+    // Memory interface (to SPI controller)
+    .mem_addr(cpu_mem_addr),
+    .mem_data_out(cpu_mem_data_out),
+    .mem_data_in(cpu_mem_data_in),
+    .mem_write(cpu_mem_write),
+    .mem_read(cpu_mem_read),
+    .mem_req(cpu_mem_req),
+    .mem_ready(cpu_mem_ready),
 
     // I/O interface
-    .io_in(ui_in),           // Input from dedicated inputs (keyboard/switches)
-    .io_status(io_status),   // Status (directly from unused for now)
+    .io_in(io_in_cpu),
+    .io_status(io_status),
     .io_out(io_out_internal),
     .io_write(io_write),
 
@@ -75,27 +115,48 @@ module tt_um_cpu_leonardoaraujosantos (
   );
 
   // ============================================================================
-  // External RAM Interface Pin Mapping
+  // SPI Memory Controller Instantiation
   // ============================================================================
-  // uo_out[4:0] = RAM_ADDR[4:0] - 5-bit address for 32 bytes of external RAM
-  // uo_out[5]   = RAM_WE        - RAM write enable
-  // uo_out[6]   = RAM_OE        - RAM output enable (directly from read strobe)
-  // uo_out[7]   = IO_WRITE      - I/O write strobe for external output latch
-  assign uo_out[4:0] = mem_addr[4:0];  // Only 5 bits for 32-byte RAM
-  assign uo_out[5]   = mem_write;      // RAM write enable
-  assign uo_out[6]   = mem_read;       // RAM output enable (directly from read)
-  assign uo_out[7]   = io_write;       // I/O write strobe
+  spi_memory_controller spi_ctrl (
+    .clk(clk),
+    .reset(reset),
+
+    // CPU Interface
+    .mem_req(cpu_mem_req),
+    .mem_we(cpu_mem_write),
+    .mem_addr(cpu_mem_addr),
+    .mem_wdata(cpu_mem_data_out),
+    .mem_rdata(cpu_mem_data_in),
+    .mem_ready(cpu_mem_ready),
+
+    // SPI Interface (directly to external SPI SRAM)
+    .spi_cs_n(spi_cs_n),
+    .spi_sclk(spi_sclk),
+    .spi_mosi(spi_mosi),
+    .spi_miso(spi_miso)
+  );
 
   // ============================================================================
-  // Bidirectional RAM Data Bus
+  // Output Pin Assignments
   // ============================================================================
-  // uio[7:0] = RAM_DATA[7:0] - 8-bit bidirectional data bus
-  // Direction: output when writing to RAM, input when reading from RAM
-  assign uio_oe  = {8{mem_write}};     // All outputs when writing, all inputs when reading
-  assign uio_out = mem_data_out;       // Data from CPU to external RAM (directly from AC)
-  assign mem_data_in = uio_in;         // Data from external RAM to CPU
+  // SPI signals on dedicated outputs
+  assign uo_out[0] = spi_cs_n;           // SPI Chip Select (directly to SRAM)
+  assign uo_out[1] = spi_sclk;           // SPI Clock (directly to SRAM)
+  assign uo_out[2] = spi_mosi;           // SPI MOSI (directly to SRAM)
+  assign uo_out[3] = dbg_ac[0];          // Debug: AC bit 0
+  assign uo_out[4] = dbg_ac[1];          // Debug: AC bit 1
+  assign uo_out[5] = dbg_ac[2];          // Debug: AC bit 2
+  assign uo_out[6] = dbg_ac[3];          // Debug: AC bit 3
+  assign uo_out[7] = io_write;           // I/O write strobe
+
+  // SPI MISO input
+  assign spi_miso = ui_in[0];
+
+  // Bidirectional IOs configured as outputs for debug
+  assign uio_oe  = 8'hFF;                // All outputs
+  assign uio_out = dbg_pc;               // Debug: PC (8-bit)
 
   // List all unused inputs to prevent warnings
-  wire _unused = &{ena, mem_addr[7:5], io_out_internal, dbg_pc, dbg_ac, dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, 1'b0};
+  wire _unused = &{ena, io_out_internal, dbg_ac[7:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, 1'b0};
 
 endmodule

@@ -3,8 +3,8 @@ project:
   title:        "NeanderCPU"      # Project title
   author:       "Leonardo Araujo dos Santos"      # Your name
   discord:      "leonardoaraujos"      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Brazilian 8-bit educational CPU"      # One line description of what your project does
-  language:     "Verilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
+  description:  "Brazilian 8-bit educational CPU with SPI memory interface"      # One line description of what your project does
+  language:     "SystemVerilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     10000000       # Clock frequency in Hz (or 0 if not applicable)
 
   # How many tiles your design occupies? A single tile is about 167x108 uM.
@@ -21,13 +21,14 @@ project:
     - "neander_x_datapath.sv"
     - "neander_x_control_unit.sv"
     - "top_cpu_neander_x.sv"
+    - "spi_memory_controller.sv"
     - "project.sv"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
-  # Inputs - I/O Input Port (directly connected to CPU io_in for switches/keyboard)
-  ui[0]: "IO_IN[0]"
+  # Inputs - SPI MISO and I/O Input Port
+  ui[0]: "SPI_MISO"
   ui[1]: "IO_IN[1]"
   ui[2]: "IO_IN[2]"
   ui[3]: "IO_IN[3]"
@@ -36,25 +37,25 @@ pinout:
   ui[6]: "IO_IN[6]"
   ui[7]: "IO_IN[7]"
 
-  # Outputs - RAM Address (5-bit for 32 bytes) and Control Signals
-  uo[0]: "RAM_ADDR[0]"
-  uo[1]: "RAM_ADDR[1]"
-  uo[2]: "RAM_ADDR[2]"
-  uo[3]: "RAM_ADDR[3]"
-  uo[4]: "RAM_ADDR[4]"
-  uo[5]: "RAM_WE"
-  uo[6]: "RAM_OE"
+  # Outputs - SPI Interface and Debug
+  uo[0]: "SPI_CS_N"
+  uo[1]: "SPI_SCLK"
+  uo[2]: "SPI_MOSI"
+  uo[3]: "DBG_AC[0]"
+  uo[4]: "DBG_AC[1]"
+  uo[5]: "DBG_AC[2]"
+  uo[6]: "DBG_AC[3]"
   uo[7]: "IO_WRITE"
 
-  # Bidirectional pins - RAM Data Bus (directly from/to CPU mem_data)
-  uio[0]: "RAM_DATA[0]"
-  uio[1]: "RAM_DATA[1]"
-  uio[2]: "RAM_DATA[2]"
-  uio[3]: "RAM_DATA[3]"
-  uio[4]: "RAM_DATA[4]"
-  uio[5]: "RAM_DATA[5]"
-  uio[6]: "RAM_DATA[6]"
-  uio[7]: "RAM_DATA[7]"
+  # Bidirectional pins - Debug Program Counter
+  uio[0]: "DBG_PC[0]"
+  uio[1]: "DBG_PC[1]"
+  uio[2]: "DBG_PC[2]"
+  uio[3]: "DBG_PC[3]"
+  uio[4]: "DBG_PC[4]"
+  uio[5]: "DBG_PC[5]"
+  uio[6]: "DBG_PC[6]"
+  uio[7]: "DBG_PC[7]"
 
 # Do not change!
 yaml_version: 6

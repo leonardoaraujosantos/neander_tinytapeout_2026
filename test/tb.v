@@ -1,8 +1,9 @@
 `default_nettype none
 `timescale 1ns / 1ps
 
-/* This testbench just instantiates the module and makes some convenient wires
-   that can be driven / tested by the cocotb test.py.
+/* This testbench instantiates the CPU project and SPI SRAM model.
+   The SPI signals are connected between the project and SRAM.
+   Tests can load memory directly via the spi_ram.memory array.
 */
 module tb ();
 
@@ -23,7 +24,22 @@ module tb ();
   wire [7:0] uio_out;
   wire [7:0] uio_oe;
 
-  // Replace tt_um_example with your module name:
+  // SPI signals extracted from project outputs/inputs
+  wire spi_cs_n  = uo_out[0];   // SPI Chip Select
+  wire spi_sclk  = uo_out[1];   // SPI Clock
+  wire spi_mosi  = uo_out[2];   // SPI MOSI
+  wire spi_miso;                 // SPI MISO (from SRAM to CPU)
+  wire io_write  = uo_out[7];   // I/O write strobe
+
+  // Debug signals from uio_out
+  wire [7:0] dbg_pc = uio_out;
+
+  // Connect SPI MISO to ui_in[0]
+  always @(*) begin
+    ui_in[0] = spi_miso;
+  end
+
+  // CPU Project (TinyTapeout module)
   tt_um_cpu_leonardoaraujosantos user_project (
       .ui_in  (ui_in),    // Dedicated inputs
       .uo_out (uo_out),   // Dedicated outputs
@@ -33,6 +49,14 @@ module tb ();
       .ena    (ena),      // enable - goes high when design is selected
       .clk    (clk),      // clock
       .rst_n  (rst_n)     // not reset
+  );
+
+  // SPI SRAM Model
+  spi_sram_model spi_ram (
+      .spi_cs_n (spi_cs_n),
+      .spi_sclk (spi_sclk),
+      .spi_mosi (spi_mosi),
+      .spi_miso (spi_miso)
   );
 
 endmodule
