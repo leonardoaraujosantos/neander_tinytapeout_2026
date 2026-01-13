@@ -1,5 +1,5 @@
 // ============================================================================
-// neander_tb_wrapper.sv - Testbench wrapper for cocotb (8-bit + SPI)
+// neander_tb_wrapper.sv - Testbench wrapper for cocotb (16-bit addressing + SPI)
 // Instantiates CPU + SPI Controller + SPI SRAM Model
 // ============================================================================
 
@@ -10,9 +10,9 @@ module neander_tb_wrapper (
     input  logic        reset,
 
     // Memory load interface (for cocotb to load programs)
-    // Uses 8-bit addresses for 256 byte address space
+    // Uses 16-bit addresses for 64KB address space
     input  logic        mem_load_en,
-    input  logic [7:0]  mem_load_addr,
+    input  logic [15:0] mem_load_addr,
     input  logic [7:0]  mem_load_data,
 
     // I/O interface
@@ -21,34 +21,34 @@ module neander_tb_wrapper (
     output logic [7:0]  io_out,
     output logic        io_write,
 
-    // Debug outputs (8-bit for PC, SP, FP)
-    output logic [7:0]  dbg_pc,
+    // Debug outputs (16-bit for PC, SP, FP)
+    output logic [15:0] dbg_pc,
     output logic [7:0]  dbg_ac,
     output logic [7:0]  dbg_ri,
-    output logic [7:0]  dbg_sp,
+    output logic [15:0] dbg_sp,
     output logic [7:0]  dbg_x,
     output logic [7:0]  dbg_y,
-    output logic [7:0]  dbg_fp,
+    output logic [15:0] dbg_fp,
 
-    // Memory read interface (for verification) - 8-bit address
-    input  logic [7:0]  mem_read_addr,
+    // Memory read interface (for verification) - 16-bit address
+    input  logic [15:0] mem_read_addr,
     output logic [7:0]  mem_read_data,
 
     // Debug signals for SPI handshaking (visible from cocotb)
-    output logic [7:0]  cpu_mem_addr,
+    output logic [15:0] cpu_mem_addr,
     output logic        cpu_mem_req,
     output logic        cpu_mem_ready,
     output logic [7:0]  cpu_mem_data_in,
 
     // Debug signals for SPI controller (to trace address latching)
-    output logic [7:0]  spi_addr_latch,
+    output logic [15:0] spi_addr_latch,
     output logic [3:0]  spi_state
 );
 
     // ============================================================================
-    // CPU <-> SPI Controller Interface (8-bit address)
+    // CPU <-> SPI Controller Interface (16-bit address)
     // ============================================================================
-    logic [7:0]  cpu_mem_addr_int;
+    logic [15:0] cpu_mem_addr_int;
     logic [7:0]  cpu_mem_data_out;
     logic [7:0]  cpu_mem_data_in_int;
     logic        cpu_mem_write;
@@ -75,7 +75,7 @@ module neander_tb_wrapper (
     logic        spi_miso;
 
     // ============================================================================
-    // CPU Instantiation (8-bit address)
+    // CPU Instantiation (16-bit address)
     // ============================================================================
     cpu_top cpu (
         .clk(clk),
@@ -107,13 +107,13 @@ module neander_tb_wrapper (
     );
 
     // ============================================================================
-    // SPI Memory Controller Instantiation (8-bit address)
+    // SPI Memory Controller Instantiation (16-bit address)
     // ============================================================================
     spi_memory_controller spi_ctrl (
         .clk(clk),
         .reset(reset),
 
-        // CPU Interface (8-bit address)
+        // CPU Interface (16-bit address)
         .mem_req(cpu_mem_req_int),
         .mem_we(cpu_mem_write),
         .mem_addr(cpu_mem_addr_int),
@@ -141,15 +141,15 @@ module neander_tb_wrapper (
     // ============================================================================
     // Memory Load Interface (direct access to SPI SRAM for loading programs)
     // Uses the spi_sram_model's internal memory array directly
-    // Zero-extend 8-bit address to 16-bit for SPI SRAM model
+    // Full 16-bit address for 64KB space
     // ============================================================================
     always_ff @(posedge clk) begin
         if (mem_load_en) begin
-            spi_ram.memory[{8'h00, mem_load_addr}] <= mem_load_data;
+            spi_ram.memory[mem_load_addr] <= mem_load_data;
         end
     end
 
-    // Memory read interface for verification (zero-extend 8-bit address)
-    assign mem_read_data = spi_ram.memory[{8'h00, mem_read_addr}];
+    // Memory read interface for verification (full 16-bit address)
+    assign mem_read_data = spi_ram.memory[mem_read_addr];
 
 endmodule

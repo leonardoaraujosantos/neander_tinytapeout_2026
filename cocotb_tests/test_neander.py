@@ -106,6 +106,178 @@ class Op:
     HLT  = 0xF0
 
 
+# ============================================================================
+# Program Converter: 8-bit address format -> 16-bit address format
+# ============================================================================
+# Old format: [opcode, 8-bit addr] (2 bytes for memory instructions)
+# New format: [opcode, addr_lo, addr_hi] (3 bytes for memory instructions)
+
+# Opcodes that take a memory address (need expansion from 2 bytes to 3 bytes)
+MEMORY_ADDRESS_OPCODES = {
+    # STA family
+    0x10,  # STA
+    0x11,  # STA_X
+    0x12,  # STA_Y
+    0x14,  # STA_FP
+    # LDA family
+    0x20,  # LDA
+    0x21,  # LDA_X
+    0x22,  # LDA_Y
+    0x24,  # LDA_FP
+    # ALU with memory
+    0x30,  # ADD
+    0x31,  # ADC
+    0x40,  # OR
+    0x50,  # AND
+    0x51,  # SBC
+    0x74,  # SUB
+    0x77,  # XOR
+    0x02,  # CMP
+    # X/Y register with memory
+    0x7A,  # LDX
+    0x7B,  # STX
+    0x07,  # LDY
+    0x08,  # STY
+    # Jump instructions (code addresses - need remapping)
+    0x80,  # JMP
+    0x81,  # JC
+    0x82,  # JNC
+    0x83,  # JLE
+    0x84,  # JGT
+    0x85,  # JGE
+    0x86,  # JBE
+    0x87,  # JA
+    0x90,  # JN
+    0xA0,  # JZ
+    0xB0,  # JNZ
+    # Subroutine
+    0x72,  # CALL
+}
+
+# Jump/branch opcodes (these reference code addresses that need remapping)
+JUMP_OPCODES = {
+    0x80,  # JMP
+    0x81,  # JC
+    0x82,  # JNC
+    0x83,  # JLE
+    0x84,  # JGT
+    0x85,  # JGE
+    0x86,  # JBE
+    0x87,  # JA
+    0x90,  # JN
+    0xA0,  # JZ
+    0xB0,  # JNZ
+    0x72,  # CALL
+}
+
+# Opcodes that take an immediate value or port (keep as 2 bytes, no expansion)
+IMMEDIATE_OPCODES = {
+    0xE0,  # LDI (immediate)
+    0x7C,  # LDXI (immediate)
+    0x06,  # LDYI (immediate)
+    0xD0,  # OUT (port number)
+    0xC0,  # IN (port number)
+}
+
+# All other opcodes are single-byte (no operand)
+
+# Data area threshold - addresses >= this are treated as data, not code
+DATA_AREA_START = 0x40  # Addresses >= 0x40 are considered data addresses
+
+
+def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
+    """
+    Convert an old 8-bit address format program to 16-bit address format.
+
+    Old format: [opcode, 8-bit addr] for memory instructions
+    New format: [opcode, addr_lo, addr_hi] for memory instructions
+
+    This converter:
+    1. Expands all memory address operands to 16-bit
+    2. Remaps code addresses (jumps) to account for program expansion
+    3. Keeps data addresses unchanged (they point to data area, not code)
+
+    Args:
+        program: List of bytes in old 8-bit format
+        data_area_start: Addresses >= this are treated as data addresses (no remapping)
+
+    Returns:
+        List of bytes in new 16-bit format
+    """
+    # First pass: build address mapping (old position -> new position)
+    addr_map = {}
+    old_pos = 0
+    new_pos = 0
+
+    while old_pos < len(program):
+        addr_map[old_pos] = new_pos
+        opcode = program[old_pos]
+
+        if opcode in MEMORY_ADDRESS_OPCODES:
+            # Old: 2 bytes (opcode + addr), New: 3 bytes (opcode + addr_lo + addr_hi)
+            old_pos += 2
+            new_pos += 3
+        elif opcode in IMMEDIATE_OPCODES:
+            # Keep as 2 bytes
+            old_pos += 2
+            new_pos += 2
+        else:
+            # Single byte opcode
+            old_pos += 1
+            new_pos += 1
+
+    # Calculate where the old program ended and where the new program will end
+    old_program_end = old_pos
+    new_program_end = new_pos
+
+    # Second pass: convert program with address remapping
+    result = []
+    i = 0
+    while i < len(program):
+        opcode = program[i]
+
+        if opcode in MEMORY_ADDRESS_OPCODES:
+            if i + 1 < len(program):
+                addr = program[i + 1]
+                result.append(opcode)
+
+                # Remap addresses that fall within the program area
+                # This includes both jump targets AND data addresses embedded in the program
+                if addr in addr_map:
+                    # Address within code area: remap to new position
+                    new_addr = addr_map[addr]
+                elif addr < old_program_end:
+                    # Address is within old program bounds but not at an instruction boundary
+                    # Find the closest instruction start and calculate offset
+                    # This handles data embedded between instructions
+                    closest_start = max(k for k in addr_map.keys() if k <= addr)
+                    offset = addr - closest_start
+                    new_addr = addr_map[closest_start] + offset
+                else:
+                    # Address is beyond program area (safe data area): keep as is
+                    new_addr = addr
+
+                result.append(new_addr & 0xFF)        # addr_lo
+                result.append((new_addr >> 8) & 0xFF)  # addr_hi
+                i += 2
+            else:
+                result.append(opcode)
+                i += 1
+        elif opcode in IMMEDIATE_OPCODES:
+            result.append(opcode)
+            if i + 1 < len(program):
+                result.append(program[i + 1])
+                i += 2
+            else:
+                i += 1
+        else:
+            # Single-byte opcode
+            result.append(opcode)
+            i += 1
+
+    return result
+
+
 class NeanderTestbench:
     """Helper class for Neander CPU testing"""
 
@@ -145,8 +317,16 @@ class NeanderTestbench:
         self.dut.mem_load_en.value = 0
         await RisingEdge(self.dut.clk)
 
-    async def load_program(self, program, start_addr=0):
-        """Load a program (list of bytes) into memory starting at start_addr"""
+    async def load_program(self, program, start_addr=0, convert_to_16bit=True):
+        """Load a program (list of bytes) into memory starting at start_addr
+
+        Args:
+            program: List of bytes (old 8-bit format or new 16-bit format)
+            start_addr: Starting address in memory
+            convert_to_16bit: If True, automatically convert from old 8-bit format
+        """
+        if convert_to_16bit:
+            program = convert_program_to_16bit(program)
         for i, byte in enumerate(program):
             await self.load_byte(start_addr + i, byte)
 
@@ -5622,17 +5802,18 @@ async def test_fp_parameter_access(dut):
         Op.NOP,             # 0x0F
 
         # Function at 0x10
-        # After CALL: SP = 0xFD (return address at 0xFD)
+        # After CALL: SP = 0xFC (16-bit return address at 0xFC-0xFD)
         # Parameter at 0xFE, accessible as FP + offset
-        Op.PUSH_FP,         # 0x10: Save FP, SP = 0xFC
-        Op.TSF,             # 0x11: FP = SP = 0xFC
-        # Frame layout:
+        Op.PUSH_FP,         # 0x10: Save FP (8-bit), SP = 0xFB
+        Op.TSF,             # 0x11: FP = SP = 0xFB
+        # Frame layout (with 16-bit return address):
         # 0xFF: (unused)
         # 0xFE: Parameter (0x55)
-        # 0xFD: Return address
-        # 0xFC: Old FP (FP points here)
-        # Access parameter at FP + 2 = 0xFE
-        Op.LDA_FP, 0x02,    # 0x12: AC = MEM[0xFC + 0x02] = MEM[0xFE] = 0x55
+        # 0xFD: Return address HIGH
+        # 0xFC: Return address LOW
+        # 0xFB: Old FP (FP points here)
+        # Access parameter at FP + 3 = 0xFE
+        Op.LDA_FP, 0x03,    # 0x12: AC = MEM[0xFB + 0x03] = MEM[0xFE] = 0x55
         Op.OUT, 0x00,       # 0x14: Output parameter
         Op.TFS,             # 0x16: Restore SP
         Op.POP_FP,          # 0x17: Restore FP

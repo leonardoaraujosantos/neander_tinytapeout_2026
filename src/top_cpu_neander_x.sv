@@ -3,17 +3,17 @@
 // ============================================================================
 
 module cpu_top (
-    input  logic       clk,
-    input  logic       reset,
+    input  logic        clk,
+    input  logic        reset,
 
-    // Interface com RAM (SPI memory controller handshaking)
-    output logic [7:0] mem_addr,
-    output logic [7:0] mem_data_out,
-    input  logic [7:0] mem_data_in,
-    output logic       mem_write,
-    output logic       mem_read,
-    output logic       mem_req,       // Memory access request (to SPI controller)
-    input  logic       mem_ready,     // Memory access complete (from SPI controller)
+    // Interface com RAM (SPI memory controller handshaking) - 16-bit addressing
+    output logic [15:0] mem_addr,
+    output logic [7:0]  mem_data_out,
+    input  logic [7:0]  mem_data_in,
+    output logic        mem_write,
+    output logic        mem_read,
+    output logic        mem_req,       // Memory access request (to SPI controller)
+    input  logic        mem_ready,     // Memory access complete (from SPI controller)
 
     // Interface com I/O
     input  logic [7:0] io_in,
@@ -21,18 +21,18 @@ module cpu_top (
     output logic [7:0] io_out,
     output logic       io_write,
 
-    // Debug
-    output logic [7:0] dbg_pc,
-    output logic [7:0] dbg_ac,
-    output logic [7:0] dbg_ri,
-    output logic [7:0] dbg_sp,
-    output logic [7:0] dbg_x,     // X register debug output
-    output logic [7:0] dbg_y,     // Y register debug output
-    output logic [7:0] dbg_fp     // FP register debug output
+    // Debug - 16-bit PC, SP, FP for 64KB addressing
+    output logic [15:0] dbg_pc,
+    output logic [7:0]  dbg_ac,
+    output logic [7:0]  dbg_ri,
+    output logic [15:0] dbg_sp,
+    output logic [7:0]  dbg_x,     // X register debug output
+    output logic [7:0]  dbg_y,     // Y register debug output
+    output logic [15:0] dbg_fp     // FP register debug output
 );
 
     logic       pc_inc, pc_load;
-    logic       ac_load, ri_load, rem_load, rdm_load, nz_load;
+    logic       ac_load, ri_load, rem_load, rdm_load, rdm_load_hi, nz_load;
     logic       c_load;          // Carry flag load (LCC extension)
     logic [1:0] addr_sel;
     logic [3:0] alu_op;          // Extended to 4 bits for NEG
@@ -56,10 +56,12 @@ module cpu_top (
     logic       indexed_mode_y;  // Use indexed addressing (addr + Y)
     logic       mul_to_y;        // Load Y with MUL high byte
     // Frame Pointer Extension signals
-    logic       fp_load;         // Load FP register
+    logic       fp_load;         // Load FP full 16-bit (for TSF)
+    logic       fp_load_lo;      // Load FP low byte (for POP_FP)
+    logic       fp_load_hi;      // Load FP high byte (for POP_FP)
     logic       sp_load;         // Load SP from FP (for TFS)
     logic       indexed_mode_fp; // Use indexed addressing (addr + FP)
-    logic [2:0] mem_data_sel_ext; // Extended: 000=AC, 001=PC, 010=X, 011=Y, 100=FP
+    logic [2:0] mem_data_sel_ext; // Extended: 000=AC, 001=PC_LO, 010=X, 011=Y, 100=FP_LO, 101=PC_HI, 110=FP_HI
 
     neander_datapath dp (
         .clk(clk),
@@ -73,6 +75,7 @@ module cpu_top (
         .ri_load(ri_load),
         .rem_load(rem_load),
         .rdm_load(rdm_load),
+        .rdm_load_hi(rdm_load_hi),  // 16-bit address fetch high byte
         .nz_load(nz_load),
         .c_load(c_load),           // Carry flag load (LCC extension)
         .addr_sel(addr_sel),
@@ -94,6 +97,8 @@ module cpu_top (
         .mul_to_y(mul_to_y),
         // Frame Pointer Extension signals
         .fp_load(fp_load),
+        .fp_load_lo(fp_load_lo),
+        .fp_load_hi(fp_load_hi),
         .sp_load(sp_load),
         .indexed_mode_fp(indexed_mode_fp),
         .mem_data_sel_ext(mem_data_sel_ext),
@@ -138,6 +143,7 @@ module cpu_top (
         .ri_load(ri_load),
         .rem_load(rem_load),
         .rdm_load(rdm_load),
+        .rdm_load_hi(rdm_load_hi),  // 16-bit address fetch high byte
         .nz_load(nz_load),
         .c_load(c_load),           // Carry flag load (LCC extension)
         .addr_sel(addr_sel),
@@ -160,6 +166,8 @@ module cpu_top (
         .mul_to_y(mul_to_y),
         // Frame Pointer Extension signals
         .fp_load(fp_load),
+        .fp_load_lo(fp_load_lo),
+        .fp_load_hi(fp_load_hi),
         .sp_load(sp_load),
         .indexed_mode_fp(indexed_mode_fp),
         .mem_data_sel_ext(mem_data_sel_ext)

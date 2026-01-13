@@ -1,15 +1,14 @@
 // ============================================================================
-// spi_memory_controller.sv — SPI Memory Controller for Neander CPU (8-bit)
+// spi_memory_controller.sv — SPI Memory Controller for Neander CPU (16-bit)
 // ============================================================================
 // Bridges the CPU's parallel memory interface to serial SPI SRAM
 // Supports standard SPI SRAM commands (23LC512, 23K256, etc.)
 //
-// CPU uses 8-bit addresses (256 byte address space), but SPI protocol
-// sends 16-bit addresses (high byte is always 0x00)
+// CPU uses 16-bit addresses (64KB address space)
 //
 // Protocol:
-//   READ:  CS=0, send 0x03, send 0x00, send addr, receive data, CS=1
-//   WRITE: CS=0, send 0x02, send 0x00, send addr, send data, CS=1
+//   READ:  CS=0, send 0x03, send addr_hi, send addr_lo, receive data, CS=1
+//   WRITE: CS=0, send 0x02, send addr_hi, send addr_lo, send data, CS=1
 //
 // Timing: SPI clock = clk/2 (half-speed), each byte takes 16 CPU cycles
 // ============================================================================
@@ -18,10 +17,10 @@ module spi_memory_controller (
     input  logic        clk,
     input  logic        reset,
 
-    // CPU Interface (8-bit addressing)
+    // CPU Interface (16-bit addressing)
     input  logic        mem_req,      // Memory access request
     input  logic        mem_we,       // 0 = read, 1 = write
-    input  logic [7:0]  mem_addr,     // 8-bit address (256 byte space)
+    input  logic [15:0] mem_addr,     // 16-bit address (64KB space)
     input  logic [7:0]  mem_wdata,    // Write data
     output logic [7:0]  mem_rdata,    // Read data
     output logic        mem_ready,    // Access complete (1 cycle pulse)
@@ -53,7 +52,7 @@ module spi_memory_controller (
     logic [7:0] shift_in;         // Shift register for input
     logic       sclk_phase;       // SCLK phase toggle
     logic       is_write;         // Latched write flag
-    logic [7:0] addr_latch;       // Latched address (8-bit)
+    logic [15:0] addr_latch;      // Latched address (16-bit)
     logic [7:0] wdata_latch;      // Latched write data
 
     // SPI clock generation (clk/2)
@@ -84,7 +83,7 @@ module spi_memory_controller (
             shift_in    <= 8'h00;
             sclk_phase  <= 1'b0;
             is_write    <= 1'b0;
-            addr_latch  <= 8'h00;
+            addr_latch  <= 16'h0000;
             wdata_latch <= 8'h00;
         end else begin
             // Default: clear ready pulse
@@ -122,9 +121,9 @@ module spi_memory_controller (
                             // Byte complete, prepare next
                             bit_cnt <= 3'd7;
                             case (state)
-                                SEND_CMD:     shift_out <= 8'h00;        // Load addr_hi (always 0 for 8-bit)
-                                SEND_ADDR_HI: shift_out <= addr_latch;   // Load addr_lo (8-bit address)
-                                SEND_ADDR_LO: shift_out <= wdata_latch;  // Load write data
+                                SEND_CMD:     shift_out <= addr_latch[15:8];  // Load addr_hi (16-bit addressing)
+                                SEND_ADDR_HI: shift_out <= addr_latch[7:0];   // Load addr_lo
+                                SEND_ADDR_LO: shift_out <= wdata_latch;       // Load write data
                                 default:      shift_out <= 8'h00;
                             endcase
                         end else begin
