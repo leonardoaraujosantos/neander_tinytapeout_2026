@@ -18,7 +18,7 @@
 // ============================================================================
 
 // ---------------------------------------------------------------------------
-// Generic Register Module (Can be reused)
+// Generic Register Module (Can be reused) - 8-bit version
 // ---------------------------------------------------------------------------
 module generic_reg (
     input  logic       clk,
@@ -36,48 +36,90 @@ module generic_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
-// PC Register (Specific behavior: Increment & Load)
+// Generic Register Module - 16-bit version (for PC, SP, REM)
 // ---------------------------------------------------------------------------
-module pc_reg (
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       pc_inc,
-    input  logic       pc_load,
-    input  logic [7:0] data_in,
-    output logic [7:0] pc_value
+module generic_reg_16 (
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        load,
+    input  logic [15:0] data_in,
+    output logic [15:0] value
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset)
-            pc_value <= 8'h00;
-        else if (pc_load)
-            pc_value <= data_in;
-        else if (pc_inc)
-            pc_value <= pc_value + 8'h01;
+            value <= 16'h0000;
+        else if (load)
+            value <= data_in;
     end
 endmodule
 
 // ---------------------------------------------------------------------------
-// SP Register (Stack Pointer: Increment, Decrement & Load)
-// Initialized to 0xFF (stack grows downward from top of memory)
+// RDM Register - 16-bit with separate low/high byte loading
+// Used for fetching 16-bit addresses in two 8-bit memory reads
 // ---------------------------------------------------------------------------
-module sp_reg (
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       sp_inc,
-    input  logic       sp_dec,
-    input  logic       sp_load,
-    input  logic [7:0] data_in,
-    output logic [7:0] sp_value
+module rdm_reg (
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        load_lo,      // Load low byte from data_in
+    input  logic        load_hi,      // Load high byte from data_in
+    input  logic [7:0]  data_in,      // 8-bit data from memory
+    output logic [15:0] value
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset)
-            sp_value <= 8'hFF;  // Stack starts at top of memory
+            value <= 16'h0000;
+        else begin
+            if (load_lo)
+                value[7:0] <= data_in;
+            if (load_hi)
+                value[15:8] <= data_in;
+        end
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
+// PC Register (Specific behavior: Increment & Load) - 16-bit for 64KB addressing
+// ---------------------------------------------------------------------------
+module pc_reg (
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        pc_inc,
+    input  logic        pc_load,
+    input  logic [15:0] data_in,
+    output logic [15:0] pc_value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            pc_value <= 16'h0000;
+        else if (pc_load)
+            pc_value <= data_in;
+        else if (pc_inc)
+            pc_value <= pc_value + 16'h0001;
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
+// SP Register (Stack Pointer: Increment, Decrement & Load) - 16-bit for 64KB addressing
+// Initialized to 0xFFFF (stack grows downward from top of memory)
+// ---------------------------------------------------------------------------
+module sp_reg (
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        sp_inc,
+    input  logic        sp_dec,
+    input  logic        sp_load,
+    input  logic [15:0] data_in,
+    output logic [15:0] sp_value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            sp_value <= 16'h00FF;  // Stack starts at top of page 0 for compatibility
         else if (sp_load)
             sp_value <= data_in;
         else if (sp_dec)
-            sp_value <= sp_value - 8'h01;  // PUSH: decrement first, then write
+            sp_value <= sp_value - 16'h0001;  // PUSH: decrement first, then write
         else if (sp_inc)
-            sp_value <= sp_value + 8'h01;  // POP: read first, then increment
+            sp_value <= sp_value + 16'h0001;  // POP: read first, then increment
     end
 endmodule
 
@@ -157,33 +199,43 @@ module y_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
-// FP Frame Pointer Register (Load only)
-// Used for stack frame management in function calls
+// FP Frame Pointer Register - 16-bit for 64KB addressing
+// Supports full 16-bit load (TSF) or byte-wise loading (POP_FP)
 // ---------------------------------------------------------------------------
 module fp_reg (
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       fp_load,
-    input  logic [7:0] data_in,
-    output logic [7:0] fp_value
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        fp_load,      // Load full 16-bit value (for TSF)
+    input  logic        fp_load_lo,   // Load low byte from data_in_byte
+    input  logic        fp_load_hi,   // Load high byte from data_in_byte
+    input  logic [15:0] data_in,      // 16-bit input (from SP for TSF)
+    input  logic [7:0]  data_in_byte, // 8-bit input (from memory for POP_FP)
+    output logic [15:0] fp_value
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset)
-            fp_value <= 8'h00;
+            fp_value <= 16'h0000;
         else if (fp_load)
             fp_value <= data_in;
+        else if (fp_load_lo) begin
+            // For backward compatibility, loading only low byte clears high byte
+            fp_value[7:0] <= data_in_byte;
+            fp_value[15:8] <= 8'h00;
+        end
+        else if (fp_load_hi)
+            fp_value[15:8] <= data_in_byte;
     end
 endmodule
 
 // ---------------------------------------------------------------------------
-// MUX PC/RDM/SP -> REM (3-way address mux)
+// MUX PC/RDM/SP -> REM (3-way address mux) - 16-bit for 64KB addressing
 // ---------------------------------------------------------------------------
 module mux_addr (
-    input  logic [1:0] sel, // 00 = RDM, 01 = PC, 10 = SP
-    input  logic [7:0] pc,
-    input  logic [7:0] rdm,
-    input  logic [7:0] sp,
-    output logic [7:0] out
+    input  logic [1:0]  sel, // 00 = RDM, 01 = PC, 10 = SP
+    input  logic [15:0] pc,
+    input  logic [15:0] rdm,
+    input  logic [15:0] sp,
+    output logic [15:0] out
 );
     always_comb begin
         case (sel)
@@ -210,7 +262,8 @@ module neander_datapath (
     input  logic       ac_load,
     input  logic       ri_load,
     input  logic       rem_load,
-    input  logic       rdm_load,
+    input  logic       rdm_load,     // Load RDM low byte (for 16-bit address fetch)
+    input  logic       rdm_load_hi,  // Load RDM high byte (for 16-bit address fetch)
     input  logic       nz_load,
     input  logic       c_load,   // Carry flag load (for CMP and arithmetic ops)
     input  logic [1:0] addr_sel,  // 00=RDM, 01=PC, 10=SP
@@ -231,15 +284,17 @@ module neander_datapath (
     input  logic       indexed_mode_y, // Use indexed addressing (addr + Y)
     input  logic       mul_to_y,  // Load Y with high byte of multiplication result
     // Frame Pointer Extension signals
-    input  logic       fp_load,   // Load FP register
-    input  logic       sp_load,   // Load SP from FP (for TFS)
+    input  logic       fp_load,      // Load FP full 16-bit (for TSF)
+    input  logic       fp_load_lo,   // Load FP low byte (for POP_FP)
+    input  logic       fp_load_hi,   // Load FP high byte (for POP_FP)
+    input  logic       sp_load,      // Load SP from FP (for TFS)
     input  logic       indexed_mode_fp, // Use indexed addressing (addr + FP)
-    input  logic [2:0] mem_data_sel_ext, // Extended: 000=AC, 001=PC, 010=X, 011=Y, 100=FP
+    input  logic [2:0] mem_data_sel_ext, // Extended: 000=AC, 001=PC_LO, 010=X, 011=Y, 100=FP_LO, 101=PC_HI, 110=FP_HI
 
-    // External RAM Interface
-    input  logic [7:0] mem_data_in,
-    output logic [7:0] mem_addr,
-    output logic [7:0] mem_data_out,
+    // External RAM Interface (16-bit addressing)
+    input  logic [7:0]  mem_data_in,
+    output logic [15:0] mem_addr,
+    output logic [7:0]  mem_data_out,
 
     // I/O Interface
     input  logic [7:0] io_in,
@@ -249,52 +304,61 @@ module neander_datapath (
     output logic       io_write,
 
     // Output to Control Unit / Debug
-    output logic [3:0] opcode,
-    output logic [3:0] sub_opcode, // Lower nibble for stack ops
-    output logic       flagN,
-    output logic       flagZ,
-    output logic       flagC,      // Carry flag output
-    output logic [7:0] dbg_pc,
-    output logic [7:0] dbg_ac,
-    output logic [7:0] dbg_ri,
-    output logic [7:0] dbg_sp,
-    output logic [7:0] dbg_x,     // X register debug output
-    output logic [7:0] dbg_y,     // Y register debug output
-    output logic [7:0] dbg_fp     // FP register debug output
+    output logic [3:0]  opcode,
+    output logic [3:0]  sub_opcode, // Lower nibble for stack ops
+    output logic        flagN,
+    output logic        flagZ,
+    output logic        flagC,      // Carry flag output
+    output logic [15:0] dbg_pc,     // 16-bit PC for 64KB addressing
+    output logic [7:0]  dbg_ac,
+    output logic [7:0]  dbg_ri,
+    output logic [15:0] dbg_sp,     // 16-bit SP for 64KB addressing
+    output logic [7:0]  dbg_x,      // X register debug output
+    output logic [7:0]  dbg_y,      // Y register debug output
+    output logic [15:0] dbg_fp      // 16-bit FP for 64KB addressing
 );
 
     // Internal Signals (using 'logic' for everything)
-    logic [7:0] pc, rem, rdm, ri, ac, sp, x, y, fp;  // Added X, Y, and FP registers
+    // 16-bit registers for 64KB addressing
+    logic [15:0] pc, rem, rdm, sp, fp;
+    // 8-bit registers (data path remains 8-bit)
+    logic [7:0] ri, ac, x, y;
     logic [7:0] alu_res;
     logic [7:0] alu_mul_high;  // High byte of multiplication result from ALU
     logic       alu_carry;  // Carry output from ALU
     logic [7:0] alu_b_in;  // ALU B input (mem_data or constant 1)
-    logic [7:0] addr_mux;
-    logic [7:0] addr_indexed;  // Address + X for indexed modes
-    logic [7:0] addr_indexed_y; // Address + Y for indexed modes
-    logic [7:0] addr_indexed_fp; // Address + FP for indexed modes
-    logic [7:0] fp_in;    // FP register input (from SP for TSF, or from memory for POP_FP)
+    logic [15:0] addr_mux;
+    logic [15:0] addr_indexed;  // Address + X for indexed modes
+    logic [15:0] addr_indexed_y; // Address + Y for indexed modes
+    logic [15:0] addr_indexed_fp; // Address + FP for indexed modes
     logic [7:0] ac_in;
     logic [7:0] x_in;     // X register input (from AC for TAX, or from memory for LDX)
     logic [7:0] y_in;     // Y register input (from AC for TAY, or from memory for LDY)
     logic       N_in, Z_in, C_in;
 
     // Indexed address calculation: addr + X or addr + Y or addr + FP
-    assign addr_indexed = rdm + x;
-    assign addr_indexed_y = rdm + y;
+    // X and Y are 8-bit, zero-extended for 16-bit addition
+    assign addr_indexed = rdm + {8'h00, x};
+    assign addr_indexed_y = rdm + {8'h00, y};
     assign addr_indexed_fp = rdm + fp;
 
     // Direct assignments
     // Memory address: use indexed address when indexed_mode, indexed_mode_y, or indexed_mode_fp is set
-    assign mem_addr = indexed_mode_fp ? (rem + fp) : (indexed_mode_y ? (rem + y) : (indexed_mode ? (rem + x) : rem));
-    // Memory data output MUX (extended): 000=AC, 001=PC, 010=X, 011=Y, 100=FP
+    // X and Y are 8-bit, zero-extended for 16-bit addition; FP is 16-bit
+    assign mem_addr = indexed_mode_fp ? (rem + fp) :
+                      (indexed_mode_y ? (rem + {8'h00, y}) :
+                       (indexed_mode ? (rem + {8'h00, x}) : rem));
+    // Memory data output MUX (extended for 16-bit PC/FP):
+    // 000=AC, 001=PC_LO, 010=X, 011=Y, 100=FP_LO, 101=PC_HI, 110=FP_HI
     always_comb begin
         case (mem_data_sel_ext)
-            3'b000:  mem_data_out = ac;   // STA, PUSH
-            3'b001:  mem_data_out = pc;   // CALL (return address)
-            3'b010:  mem_data_out = x;    // STX
-            3'b011:  mem_data_out = y;    // STY
-            3'b100:  mem_data_out = fp;   // PUSH_FP
+            3'b000:  mem_data_out = ac;        // STA, PUSH
+            3'b001:  mem_data_out = pc[7:0];   // CALL (return address low byte)
+            3'b010:  mem_data_out = x;         // STX
+            3'b011:  mem_data_out = y;         // STY
+            3'b100:  mem_data_out = fp[7:0];   // PUSH_FP (low byte)
+            3'b101:  mem_data_out = pc[15:8];  // CALL (return address high byte)
+            3'b110:  mem_data_out = fp[15:8];  // PUSH_FP (high byte)
             default: mem_data_out = ac;
         endcase
     end
@@ -355,38 +419,42 @@ module neander_datapath (
     assign y_in = mul_to_y ? alu_mul_high :
                   (opcode == 4'h0 && sub_opcode == 4'h3) ? ac : mem_data_in;
 
-    // FP Frame Pointer Register
-    // Input can be from SP (TSF) or from memory (POP_FP)
+    // FP Frame Pointer Register - 16-bit
+    // Input can be from SP (TSF via fp_load) or from memory bytes (POP_FP via fp_load_lo/hi)
     fp_reg u_fp (
         .clk(clk), .reset(reset),
-        .fp_load(fp_load),
-        .data_in(fp_in), .fp_value(fp)
+        .fp_load(fp_load),           // Full 16-bit load from SP (TSF)
+        .fp_load_lo(fp_load_lo),     // Low byte from memory (POP_FP step 1)
+        .fp_load_hi(fp_load_hi),     // High byte from memory (POP_FP step 2)
+        .data_in(sp),                // 16-bit input from SP (for TSF)
+        .data_in_byte(mem_data_in),  // 8-bit input from memory (for POP_FP)
+        .fp_value(fp)
     );
-
-    // FP register input mux: select between SP (TSF) and mem_data_in (POP_FP)
-    // When opcode is 0x0 and sub_opcode is 0xA (TSF), input comes from SP
-    // When opcode is 0x0 and sub_opcode is 0xD (POP_FP), input comes from memory
-    assign fp_in = (opcode == 4'h0 && sub_opcode == 4'hA) ? sp : mem_data_in;
 
     mux_addr u_mux (
         .sel(addr_sel), .pc(pc), .rdm(rdm), .sp(sp), .out(addr_mux)
     );
 
-    // Reusing generic_reg for standard registers to reduce code size
-    generic_reg u_rem (
+    // REM register - 16-bit for 64KB addressing
+    generic_reg_16 u_rem (
         .clk(clk), .reset(reset), .load(rem_load),
         .data_in(addr_mux), .value(rem)
     );
 
-    // Logic for RDM Load is specific (load & mem_read)
-    generic_reg u_rdm (
-        .clk(clk), .reset(reset), .load(rdm_load & mem_read),
-        .data_in(mem_data_in), .value(rdm)
+    // RDM register - 16-bit with separate low/high byte loading
+    // Used for fetching 16-bit addresses in two 8-bit memory reads
+    rdm_reg u_rdm (
+        .clk(clk), .reset(reset),
+        .load_lo(rdm_load & mem_read),      // Load low byte when rdm_load & mem_read
+        .load_hi(rdm_load_hi & mem_read),   // Load high byte when rdm_load_hi & mem_read
+        .data_in(mem_data_in),
+        .value(rdm)
     );
 
+    // RI register - 8-bit, loads opcode from RDM low byte
     generic_reg u_ri (
         .clk(clk), .reset(reset), .load(ri_load),
-        .data_in(rdm), .value(ri)
+        .data_in(rdm[7:0]), .value(ri)
     );
 
     // ALU B input MUX: select between mem_data_in (00), constant 1 (01) for INC/DEC, X (10) for MUL
@@ -423,8 +491,8 @@ module neander_datapath (
             ac_in = mem_data_in;
         end
         else if (opcode == 4'hC) begin
-            // IN: 0=data, 1=status
-            case (rdm)
+            // IN: 0=data, 1=status (use low byte of rdm for port selection)
+            case (rdm[7:0])
                 8'h00: ac_in = io_in;
                 8'h01: ac_in = io_status;
                 default: ac_in = 8'h00;

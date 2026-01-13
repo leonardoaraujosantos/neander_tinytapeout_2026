@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Neander-X CPU for TinyTapeout with SPI Memory Interface
- * 8-bit educational processor with 256 byte address space via SPI SRAM
+ * 8-bit educational processor with 64KB address space via SPI SRAM
  */
 
 `default_nettype none
@@ -43,7 +43,7 @@ module tt_um_cpu_leonardoaraujosantos (
   // ============================================================================
   // CPU <-> SPI Controller Interface
   // ============================================================================
-  wire [7:0]  cpu_mem_addr;       // 8-bit addressing (256 byte space)
+  wire [15:0] cpu_mem_addr;       // 16-bit addressing (64KB space)
   wire [7:0]  cpu_mem_data_out;
   wire [7:0]  cpu_mem_data_in;
   wire        cpu_mem_write;
@@ -72,15 +72,15 @@ module tt_um_cpu_leonardoaraujosantos (
   assign io_status = 8'b0;  // Status register (unused for now)
 
   // ============================================================================
-  // Debug signals
+  // Debug signals - 16-bit PC, SP, FP for 64KB addressing
   // ============================================================================
-  wire [7:0]  dbg_pc;
+  wire [15:0] dbg_pc;
   wire [7:0]  dbg_ac;
   wire [7:0]  dbg_ri;
-  wire [7:0]  dbg_sp;
+  wire [15:0] dbg_sp;
   wire [7:0]  dbg_x;
   wire [7:0]  dbg_y;
-  wire [7:0]  dbg_fp;
+  wire [15:0] dbg_fp;
 
   // ============================================================================
   // CPU Instantiation
@@ -154,9 +154,9 @@ module tt_um_cpu_leonardoaraujosantos (
 
   // Bidirectional IOs configured as outputs for debug
   assign uio_oe  = 8'hFF;                // All outputs
-  assign uio_out = dbg_pc;               // Debug: PC (8-bit)
+  assign uio_out = dbg_pc[7:0];          // Debug: PC low byte (for 16-bit PC)
 
   // List all unused inputs to prevent warnings
-  wire _unused = &{ena, io_out_internal, dbg_ac[7:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, 1'b0};
+  wire _unused = &{ena, io_out_internal, dbg_ac[7:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_pc[15:8], 1'b0};
 
 endmodule

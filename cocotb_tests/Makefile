@@ -19,8 +19,9 @@ TOPLEVEL = neander_tb_wrapper
 
 # Python test module
 # Use test_debug for debugging SPI timing
-# Use test_neander for full test suite (148 tests)
-MODULE = test_neander
+# Use test_neander for full test suite (174 tests)
+# Use test_large_programs for large program stress tests
+MODULE ?= test_neander
 
 # Include cocotb makefiles
 include $(shell cocotb-config --makefiles)/Makefile.sim

@@ -14,6 +14,151 @@ def safe_int(value, default=0):
         return default
 
 
+# =============================================================================
+# 16-bit Address Conversion Support
+# =============================================================================
+
+# Default boundary between program area and data area (programs typically < 128 bytes)
+DATA_AREA_START = 0x80
+
+# Opcodes that take a memory address operand (need expansion from 2 bytes to 3 bytes)
+MEMORY_ADDRESS_OPCODES = {
+    0x10, 0x11, 0x12, 0x14,  # STA family (STA, STA_X, STA_Y, STA_FP)
+    0x20, 0x21, 0x22, 0x24,  # LDA family (LDA, LDA_X, LDA_Y, LDA_FP)
+    0x30, 0x31,              # ADD, ADC
+    0x40,                    # OR
+    0x50, 0x51,              # AND, SBC
+    0x74,                    # SUB
+    0x77,                    # XOR
+    0x02,                    # CMP
+    0x7A, 0x7B,              # LDX, STX
+    0x07, 0x08,              # LDY, STY
+    0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,  # JMP family
+    0x90,                    # JN
+    0xA0,                    # JZ
+    0xB0,                    # JNZ
+    0x72,                    # CALL
+}
+
+# Opcodes that are jumps (their address operand is a jump target, not data)
+JUMP_OPCODES = {
+    0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,  # JMP, JC, JNC, JLE, JGT, JGE, JBE, JA
+    0x90,                    # JN
+    0xA0,                    # JZ
+    0xB0,                    # JNZ
+    0x72,                    # CALL
+}
+
+# Opcodes that take an immediate value (stay 2 bytes - opcode + immediate)
+IMMEDIATE_OPCODES = {
+    0xE0,  # LDI
+    0x7C,  # LDXI
+    0x06,  # LDYI
+    0xD0,  # OUT (port number)
+    0xC0,  # IN (port number)
+}
+
+
+def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
+    """
+    Convert an 8-bit address format program to 16-bit address format.
+
+    Old format: [opcode, addr8] for memory operations
+    New format: [opcode, addr_lo, addr_hi] for memory operations (little-endian)
+
+    This function:
+    1. Expands memory address opcodes from 2 bytes to 3 bytes
+    2. Remaps jump targets to account for expanded instruction sizes
+    3. Remaps data addresses that fall within the program area
+    4. Preserves data area addresses (>= data_area_start) unchanged
+
+    Args:
+        program: List of bytes in old 8-bit format
+        data_area_start: Address boundary - addresses below this in program area get remapped
+
+    Returns:
+        List of bytes in new 16-bit format
+    """
+    if not program:
+        return program
+
+    # First pass: build address mapping (old position -> new position)
+    addr_map = {}
+    old_pos = 0
+    new_pos = 0
+
+    while old_pos < len(program):
+        addr_map[old_pos] = new_pos
+        opcode = program[old_pos]
+
+        if opcode in MEMORY_ADDRESS_OPCODES:
+            # Memory address opcodes: expand from 2 bytes to 3 bytes
+            old_pos += 2
+            new_pos += 3
+        elif opcode in IMMEDIATE_OPCODES:
+            # Immediate opcodes: stay 2 bytes
+            old_pos += 2
+            new_pos += 2
+        else:
+            # Single byte opcodes (NOP, HLT, PUSH, POP, etc.)
+            old_pos += 1
+            new_pos += 1
+
+    # Track the old program end for determining if addresses are in program area
+    old_program_end = old_pos
+
+    # Second pass: convert program with address remapping
+    converted = []
+    old_pos = 0
+
+    while old_pos < len(program):
+        opcode = program[old_pos]
+
+        if opcode in MEMORY_ADDRESS_OPCODES:
+            # Get the old 8-bit address
+            if old_pos + 1 < len(program):
+                old_addr = program[old_pos + 1]
+            else:
+                old_addr = 0
+
+            # Determine if this address needs remapping
+            if opcode in JUMP_OPCODES:
+                # Jump targets always get remapped (they're code addresses)
+                if old_addr in addr_map:
+                    new_addr = addr_map[old_addr]
+                else:
+                    new_addr = old_addr  # Target outside program, keep as-is
+            elif old_addr < old_program_end and old_addr < data_area_start:
+                # Data address within program area - remap it
+                if old_addr in addr_map:
+                    new_addr = addr_map[old_addr]
+                else:
+                    new_addr = old_addr
+            else:
+                # Data address outside program area - keep as-is (zero-extend to 16-bit)
+                new_addr = old_addr
+
+            # Output opcode + 16-bit address (little-endian)
+            converted.append(opcode)
+            converted.append(new_addr & 0xFF)         # addr_lo
+            converted.append((new_addr >> 8) & 0xFF)  # addr_hi
+            old_pos += 2
+
+        elif opcode in IMMEDIATE_OPCODES:
+            # Immediate value - keep as 2 bytes
+            converted.append(opcode)
+            if old_pos + 1 < len(program):
+                converted.append(program[old_pos + 1])
+            old_pos += 2
+
+        else:
+            # Single byte instruction
+            converted.append(opcode)
+            old_pos += 1
+
+    return converted
+
+
 class NeanderTB:
     """Neander CPU Testbench Helper for SPI Memory Interface"""
 
@@ -28,8 +173,16 @@ class NeanderTB:
         """Read a byte from SPI SRAM memory directly (for verification)"""
         return safe_int(self.dut.spi_ram.memory[addr].value)
 
-    def load_program(self, program, start_addr=0):
-        """Load a program into memory starting at given address"""
+    def load_program(self, program, start_addr=0, convert_to_16bit=True):
+        """Load a program into memory starting at given address.
+
+        Args:
+            program: List of bytes (opcodes and operands)
+            start_addr: Starting memory address
+            convert_to_16bit: If True, automatically convert 8-bit format to 16-bit
+        """
+        if convert_to_16bit:
+            program = convert_program_to_16bit(program)
         for i, byte in enumerate(program):
             self.load_memory(start_addr + i, byte)
 
