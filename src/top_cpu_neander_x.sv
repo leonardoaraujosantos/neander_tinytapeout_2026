@@ -73,6 +73,14 @@ module cpu_top (
     logic       ind_temp_load;    // Load swap_temp from mem_data_in (for indirect)
     logic       rdm_lo_from_temp; // Load RDM low byte from swap_temp
     logic       rdm_inc;          // Increment RDM by 1
+    // Sequential divider signals (area-efficient DIV/MOD)
+    logic       div_start;        // Start sequential division
+    logic       div_busy;         // Division in progress
+    logic       div_done;         // Division complete (pulse)
+    // Sequential multiplier signals (area-efficient MUL)
+    logic       mul_start;        // Start sequential multiplication
+    logic       mul_busy;         // Multiplication in progress
+    logic       mul_done;         // Multiplication complete (pulse)
 
     neander_datapath dp (
         .clk(clk),
@@ -124,6 +132,14 @@ module cpu_top (
         .ind_temp_load(ind_temp_load),
         .rdm_lo_from_temp(rdm_lo_from_temp),
         .rdm_inc(rdm_inc),
+        // Sequential divider signals
+        .div_start(div_start),
+        .div_busy(div_busy),
+        .div_done(div_done),
+        // Sequential multiplier signals
+        .mul_start(mul_start),
+        .mul_busy(mul_busy),
+        .mul_done(mul_done),
         .io_write_ctrl(io_write_ctrl),
         // Data/Status I/O
         .mem_data_in(mem_data_in),
@@ -203,7 +219,15 @@ module cpu_top (
         // Indirect addressing signals
         .ind_temp_load(ind_temp_load),
         .rdm_lo_from_temp(rdm_lo_from_temp),
-        .rdm_inc(rdm_inc)
+        .rdm_inc(rdm_inc),
+        // Sequential divider signals
+        .div_start(div_start),
+        .div_busy(div_busy),
+        .div_done(div_done),
+        // Sequential multiplier signals
+        .mul_start(mul_start),
+        .mul_busy(mul_busy),
+        .mul_done(mul_done)
     );
 
 endmodule

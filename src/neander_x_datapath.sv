@@ -314,6 +314,14 @@ module neander_datapath (
     input  logic       ind_temp_load,    // Load swap_temp from mem_data_in (for indirect)
     input  logic       rdm_lo_from_temp, // Load RDM low byte from swap_temp
     input  logic       rdm_inc,          // Increment RDM by 1
+    // Sequential divider interface (area-efficient DIV/MOD)
+    input  logic       div_start,        // Start sequential division
+    output logic       div_busy,         // Division in progress
+    output logic       div_done,         // Division complete (pulse)
+    // Sequential multiplier interface (area-efficient MUL)
+    input  logic       mul_start,        // Start sequential multiplication
+    output logic       mul_busy,         // Multiplication in progress
+    output logic       mul_done,         // Multiplication complete (pulse)
 
     // External RAM Interface (16-bit addressing)
     input  logic [7:0]  mem_data_in,
@@ -351,6 +359,13 @@ module neander_datapath (
     logic [7:0] alu_res;
     logic [7:0] alu_mul_high;  // High byte of multiplication result from ALU
     logic       alu_carry;  // Carry output from ALU
+    // Sequential divider signals
+    logic [7:0] div_quotient;   // Quotient from sequential divider
+    logic [7:0] div_remainder;  // Remainder from sequential divider
+    logic       div_by_zero;    // Division by zero error flag
+    // Sequential multiplier signals
+    logic [7:0] mul_product_low;  // Low byte from sequential multiplier
+    logic [7:0] mul_product_high; // High byte from sequential multiplier
     logic [7:0] alu_b_in;  // ALU B input (mem_data or constant 1)
     logic [15:0] addr_mux;
     logic [15:0] addr_indexed;  // Address + X for indexed modes
@@ -508,8 +523,42 @@ module neander_datapath (
         endcase
     end
 
+    // Sequential Divider for area-efficient DIV/MOD operations (8 cycles)
+    // Dividend is AC, Divisor is from alu_b_in (usually X register)
+    sequential_divider u_div (
+        .clk(clk),
+        .reset(reset),
+        .start(div_start),
+        .dividend(ac),
+        .divisor(alu_b_in),
+        .quotient(div_quotient),
+        .remainder(div_remainder),
+        .busy(div_busy),
+        .done(div_done),
+        .div_by_zero(div_by_zero)
+    );
+
+    // Sequential Multiplier for area-efficient MUL operations (8 cycles)
+    // Multiplicand is AC, Multiplier is from alu_b_in (usually X register)
+    sequential_multiplier u_mul (
+        .clk(clk),
+        .reset(reset),
+        .start(mul_start),
+        .multiplicand(ac),
+        .multiplier(alu_b_in),
+        .product_low(mul_product_low),
+        .product_high(mul_product_high),
+        .busy(mul_busy),
+        .done(mul_done)
+    );
+
     neander_alu u_alu (
         .a(ac), .b(alu_b_in), .alu_op(alu_op), .carry_in(flagC),
+        .mul_product_low(mul_product_low),   // Sequential multiplier results
+        .mul_product_high(mul_product_high),
+        .div_quotient(div_quotient),         // Sequential divider results
+        .div_remainder(div_remainder),
+        .div_by_zero(div_by_zero),
         .result(alu_res), .mul_high(alu_mul_high), .carry_out(alu_carry)
     );
 
