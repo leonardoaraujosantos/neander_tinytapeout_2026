@@ -95,6 +95,33 @@ These instructions extend the ALU capabilities to support C compiler code genera
 | 0x31 | ADC addr | AC <- AC + MEM[addr] + C (add with carry) | N, Z, C |
 | 0x51 | SBC addr | AC <- AC - MEM[addr] - C (subtract with borrow) | N, Z, C |
 
+### Additional LCC Extension Instructions
+
+These instructions further enhance C compiler support:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x18 | DEX | X <- X - 1 | - |
+| 0x19 | DEY | Y <- Y - 1 | - |
+| 0x32 | ADDX | AC <- AC + X | N, Z, C |
+| 0x33 | SUBX | AC <- AC - X | N, Z, C |
+| 0x34 | ADDY | AC <- AC + Y | N, Z, C |
+| 0x35 | SUBY | AC <- AC - Y | N, Z, C |
+| 0x42 | ORX | AC <- AC \| X | N, Z |
+| 0x43 | XORX | AC <- AC ^ X | N, Z |
+| 0x52 | ANDX | AC <- AC & X | N, Z |
+| 0x1A | SWPX | AC <-> X (swap) | N, Z |
+| 0x1B | SWPY | AC <-> Y (swap) | N, Z |
+| 0xE1 | CMPI imm | Compare AC with immediate | N, Z, C |
+| 0xE2 | MULI imm | AC <- AC * imm (Y gets high byte) | N, Z, C |
+| 0xE3 | DIVI imm | AC <- AC / imm; Y <- AC % imm | N, Z, C |
+| 0x28 | LDA off,SP | AC <- MEM[SP + off] | N, Z |
+| 0x17 | STA off,SP | MEM[SP + off] <- AC | - |
+| 0x26 | LDA (addr) | AC <- MEM[MEM[addr]] (indirect) | N, Z |
+| 0x16 | STA (addr) | MEM[MEM[addr]] <- AC (indirect) | - |
+| 0x27 | LDA (addr),Y | AC <- MEM[MEM[addr] + Y] | N, Z |
+| 0x88 | DECJNZ addr | AC <- AC - 1; if AC != 0: PC <- addr | N, Z |
+
 ### Carry-Based Jump Instructions
 
 These instructions enable unsigned comparisons using the carry flag:
