@@ -6,7 +6,7 @@ SIM ?= icarus
 FST ?= -fst # Use more efficient FST format
 TOPLEVEL_LANG ?= verilog
 SRC_DIR = $(PWD)/../src
-PROJECT_SOURCES = neander_x_alu.sv neander_x_datapath.sv neander_x_control_unit.sv sequential_divider.sv top_cpu_neander_x.sv spi_memory_controller.sv spi_sram_model.sv project.sv
+PROJECT_SOURCES = neander_x_alu.sv neander_x_datapath.sv neander_x_control_unit.sv sequential_divider.sv sequential_multiplier.sv top_cpu_neander_x.sv spi_memory_controller.sv spi_sram_model.sv project.sv
 
 ifneq ($(GATES),yes)
 

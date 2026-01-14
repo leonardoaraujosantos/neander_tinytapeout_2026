@@ -12,6 +12,7 @@
 //   0111: SHR  - a >> 1          (carry = LSB shifted out, logical)
 //   1000: NEG  - 0 - a = -a      (two's complement negation)
 //   1001: MUL  - a * b           (16-bit result: mul_high:result)
+//                                 ** Now uses sequential multiplier (8 cycles) **
 //   1010: DIV  - a / b           (quotient in result, remainder in mul_high)
 //                                 ** Now uses sequential divider (8 cycles) **
 //   1011: MOD  - a % b           (remainder in result, quotient in mul_high)
@@ -26,6 +27,9 @@ module neander_alu (
     input  logic [7:0] b,
     input  logic [3:0] alu_op,  // Extended to 4 bits for NEG and future ops
     input  logic       carry_in, // Carry input for ADC/SBC operations
+    // Sequential multiplier interface (results from external sequential_multiplier module)
+    input  logic [7:0] mul_product_low,  // Low byte from sequential multiplier
+    input  logic [7:0] mul_product_high, // High byte from sequential multiplier
     // Sequential divider interface (results from external sequential_divider module)
     input  logic [7:0] div_quotient,   // Quotient from sequential divider
     input  logic [7:0] div_remainder,  // Remainder from sequential divider
@@ -35,11 +39,9 @@ module neander_alu (
     output logic       carry_out  // Carry/borrow flag output
 );
     logic [8:0] temp;  // 9-bit for carry detection
-    logic [15:0] mul_temp;  // 16-bit for multiplication result
 
     always_comb begin
         temp = 9'b0;
-        mul_temp = 16'b0;
         carry_out = 1'b0;
         result = 8'h00;
         mul_high = 8'h00;
@@ -81,10 +83,10 @@ module neander_alu (
                 carry_out = (a != 8'h00);  // Carry set if result is non-zero (a was not 0)
             end
             4'b1001: begin  // MUL (a * b = 16-bit result)
-                mul_temp = a * b;  // Combinational 8x8 multiplier
-                result = mul_temp[7:0];    // Low byte to AC
-                mul_high = mul_temp[15:8]; // High byte to Y register
-                carry_out = (mul_temp[15:8] != 8'h00);  // Carry set if overflow (high byte non-zero)
+                // Uses sequential multiplier results (8 cycles, area-efficient)
+                result = mul_product_low;      // Low byte to AC
+                mul_high = mul_product_high;   // High byte to Y register
+                carry_out = (mul_product_high != 8'h00);  // Carry set if overflow (high byte non-zero)
             end
             4'b1010: begin  // DIV (a / b = quotient, a % b = remainder)
                 // Uses sequential divider results (8 cycles, area-efficient)

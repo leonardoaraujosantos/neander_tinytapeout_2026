@@ -132,7 +132,11 @@ module neander_control (
     // Sequential divider interface (area-efficient DIV/MOD)
     output logic       div_start,        // Start sequential division
     input  logic       div_busy,         // Division in progress
-    input  logic       div_done          // Division complete (pulse)
+    input  logic       div_done,         // Division complete (pulse)
+    // Sequential multiplier interface (area-efficient MUL)
+    output logic       mul_start,        // Start sequential multiplication
+    input  logic       mul_busy,         // Multiplication in progress
+    input  logic       mul_done          // Multiplication complete (pulse)
 );
 
     // Using ENUM for states (Easier to debug in Waveforms)
@@ -198,7 +202,7 @@ module neander_control (
         // Compare Immediate
         S_CMPI_1, S_CMPI_2,                    // CMPI imm (0xE1) - compare AC with immediate
         // Multiply/Divide Immediate
-        S_MULI_1, S_MULI_2,                    // MULI imm (0xE2) - AC = AC * imm
+        S_MULI_1, S_MULI_2, S_MULI_WAIT,       // MULI imm (0xE2) - AC = AC * imm - sequential
         S_DIVI_1, S_DIVI_2,                    // DIVI imm (0xE3) - AC = AC / imm
         // Decrement and jump if not zero - with 16-bit target address
         S_DECJNZ_1, S_DECJNZ_2, S_DECJNZ_2B, S_DECJNZ_2C, S_DECJNZ_3,
@@ -248,7 +252,7 @@ module neander_control (
         S_LDA_Y_1, S_LDA_Y_2, S_LDA_Y_2B, S_LDA_Y_2C, S_LDA_Y_3, S_LDA_Y_4,
         S_STA_Y_1, S_STA_Y_2, S_STA_Y_2B, S_STA_Y_2C, S_STA_Y_3, S_STA_Y_4,
         // Multiplication and Division
-        S_MUL,                                        // MUL (0x09) - AC * X -> Y:AC
+        S_MUL, S_MUL_WAIT,                            // MUL (0x09) - AC * X -> Y:AC - sequential
         S_DIV, S_DIV_WAIT,                            // DIV (0x0E) - AC / X -> AC (quotient), Y (remainder) - sequential
         S_MOD, S_MOD_WAIT,                            // MOD (0x0F) - AC % X -> AC (remainder), Y (quotient) - sequential
         S_DIVI_WAIT,                                  // DIVI wait state for sequential divider
@@ -332,6 +336,8 @@ module neander_control (
         rdm_inc          = '0;
         // Sequential divider defaults
         div_start        = '0;
+        // Sequential multiplier defaults
+        mul_start        = '0;
 
         next_state  = state;
 
@@ -1620,6 +1626,7 @@ module neander_control (
             end
 
             // --- MULI imm (0xE2) --- Multiply Immediate: AC = AC * imm
+            // Sequential multiplier: 8 cycles for area efficiency
             S_MULI_1: begin
                 addr_sel = 2'b01;     // PC -> REM
                 rem_load = 1;
@@ -1627,19 +1634,32 @@ module neander_control (
             end
             S_MULI_2: begin
                 mem_read = 1;
-                alu_op = 4'b1001;     // MUL operation
-                alu_b_sel = 3'b000;   // Select mem_data_in as operand B
+                alu_b_sel = 3'b000;   // Select mem_data_in as multiplier
                 if (mem_ready) begin
-                    ac_load = 1;      // Load result (low byte) into AC
-                    y_load = 1;       // Enable Y register load
-                    mul_to_y = 1;     // Select mul_high as Y input source
-                    nz_load = 1;      // Update N and Z flags
-                    c_load = 1;       // Update carry (overflow indicator)
-                    pc_inc = 1;
-                    next_state = S_FETCH_1;
+                    // Memory ready - start sequential multiplier
+                    mul_start = 1;    // Start the sequential multiplier
+                    pc_inc = 1;       // Increment PC past immediate operand
+                    next_state = S_MULI_WAIT;
                 end else begin
                     mem_req = 1;
                     next_state = S_MULI_2;
+                end
+            end
+            S_MULI_WAIT: begin
+                mem_read = 1;         // Keep memory read active to hold multiplier value
+                alu_b_sel = 3'b000;   // Keep mem_data_in as multiplier
+                if (mul_done) begin
+                    // Multiplication complete - load results
+                    alu_op = 4'b1001;     // MUL operation (routes multiplier results through ALU)
+                    ac_load = 1;          // Load result (low byte) into AC
+                    y_load = 1;           // Enable Y register load
+                    mul_to_y = 1;         // Select mul_high as Y input source
+                    nz_load = 1;          // Update N and Z flags
+                    c_load = 1;           // Update carry (overflow indicator)
+                    next_state = S_FETCH_1;
+                end else begin
+                    // Still multiplying - wait
+                    next_state = S_MULI_WAIT;
                 end
             end
 
@@ -2250,16 +2270,28 @@ module neander_control (
             // --- MUL (0x09) ---
             // Multiply AC by X: AC * X -> Y:AC (16-bit result)
             // Low byte goes to AC, high byte goes to Y
-            // Single cycle operation (combinational multiplier in ALU)
+            // Sequential multiplier: 8 cycles for area efficiency
             S_MUL: begin
-                alu_op = 4'b1001;   // MUL operation
-                alu_b_sel = 3'b010;  // Select X register as ALU B input
-                ac_load = 1;        // Load low byte to AC
-                y_load = 1;         // Load high byte to Y
-                mul_to_y = 1;       // Signal datapath to use mul_high for Y input
-                nz_load = 1;        // Update N and Z based on low byte (AC)
-                c_load = 1;         // Set carry if overflow (high byte != 0)
-                next_state = S_FETCH_1;
+                // Start sequential multiplier (multiplicand=AC, multiplier=X)
+                alu_b_sel = 3'b010;  // Select X register as multiplier input
+                mul_start = 1;       // Start the sequential multiplier
+                next_state = S_MUL_WAIT;
+            end
+            S_MUL_WAIT: begin
+                alu_b_sel = 3'b010;  // Keep X selected as multiplier
+                if (mul_done) begin
+                    // Multiplication complete - load results
+                    alu_op = 4'b1001;   // MUL operation (routes multiplier results through ALU)
+                    ac_load = 1;        // Load low byte to AC
+                    y_load = 1;         // Load high byte to Y
+                    mul_to_y = 1;       // Signal datapath to use mul_high for Y input
+                    nz_load = 1;        // Update N and Z based on low byte (AC)
+                    c_load = 1;         // Set carry if overflow (high byte != 0)
+                    next_state = S_FETCH_1;
+                end else begin
+                    // Still multiplying - wait
+                    next_state = S_MUL_WAIT;
+                end
             end
 
             // --- DIV (0x0E) ---

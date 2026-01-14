@@ -77,6 +77,10 @@ module cpu_top (
     logic       div_start;        // Start sequential division
     logic       div_busy;         // Division in progress
     logic       div_done;         // Division complete (pulse)
+    // Sequential multiplier signals (area-efficient MUL)
+    logic       mul_start;        // Start sequential multiplication
+    logic       mul_busy;         // Multiplication in progress
+    logic       mul_done;         // Multiplication complete (pulse)
 
     neander_datapath dp (
         .clk(clk),
@@ -132,6 +136,10 @@ module cpu_top (
         .div_start(div_start),
         .div_busy(div_busy),
         .div_done(div_done),
+        // Sequential multiplier signals
+        .mul_start(mul_start),
+        .mul_busy(mul_busy),
+        .mul_done(mul_done),
         .io_write_ctrl(io_write_ctrl),
         // Data/Status I/O
         .mem_data_in(mem_data_in),
@@ -215,7 +223,11 @@ module cpu_top (
         // Sequential divider signals
         .div_start(div_start),
         .div_busy(div_busy),
-        .div_done(div_done)
+        .div_done(div_done),
+        // Sequential multiplier signals
+        .mul_start(mul_start),
+        .mul_busy(mul_busy),
+        .mul_done(mul_done)
     );
 
 endmodule
