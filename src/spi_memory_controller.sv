@@ -1,28 +1,29 @@
 // ============================================================================
-// spi_memory_controller.sv — SPI Memory Controller for Neander CPU (16-bit)
+// spi_memory_controller.sv — SPI Memory Controller for Neander CPU (16-bit data)
 // ============================================================================
 // Bridges the CPU's parallel memory interface to serial SPI SRAM
 // Supports standard SPI SRAM commands (23LC512, 23K256, etc.)
 //
-// CPU uses 16-bit addresses (64KB address space)
+// CPU uses 16-bit addresses (64KB address space) and 16-bit data
 //
-// Protocol:
-//   READ:  CS=0, send 0x03, send addr_hi, send addr_lo, receive data, CS=1
-//   WRITE: CS=0, send 0x02, send addr_hi, send addr_lo, send data, CS=1
+// Protocol for 16-bit data (little-endian, two byte transfers):
+//   READ:  CS=0, send 0x03, send addr_hi, send addr_lo, receive data_lo, data_hi, CS=1
+//   WRITE: CS=0, send 0x02, send addr_hi, send addr_lo, send data_lo, data_hi, CS=1
 //
 // Timing: SPI clock = clk/2 (half-speed), each byte takes 16 CPU cycles
+// Total: ~5 bytes = ~80 CPU cycles per 16-bit access
 // ============================================================================
 
 module spi_memory_controller (
     input  logic        clk,
     input  logic        reset,
 
-    // CPU Interface (16-bit addressing)
+    // CPU Interface (16-bit addressing, 16-bit data)
     input  logic        mem_req,      // Memory access request
     input  logic        mem_we,       // 0 = read, 1 = write
     input  logic [15:0] mem_addr,     // 16-bit address (64KB space)
-    input  logic [7:0]  mem_wdata,    // Write data
-    output logic [7:0]  mem_rdata,    // Read data
+    input  logic [15:0] mem_wdata,    // Write data (16-bit)
+    output logic [15:0] mem_rdata,    // Read data (16-bit)
     output logic        mem_ready,    // Access complete (1 cycle pulse)
 
     // SPI Interface
@@ -35,25 +36,28 @@ module spi_memory_controller (
     // State machine states
     typedef enum logic [3:0] {
         IDLE,
-        ADDR_LATCH,   // Wait one cycle for address to stabilize
+        ADDR_LATCH,    // Wait one cycle for address to stabilize
         SEND_CMD,
         SEND_ADDR_HI,
         SEND_ADDR_LO,
-        SEND_DATA,
-        RECV_DATA,
+        SEND_DATA_LO,  // Send low byte of data
+        SEND_DATA_HI,  // Send high byte of data
+        RECV_DATA_LO,  // Receive low byte of data
+        RECV_DATA_HI,  // Receive high byte of data
         DONE
     } state_t;
 
     state_t state, next_state;
 
     // Internal registers
-    logic [2:0] bit_cnt;          // Bit counter (0-7)
-    logic [7:0] shift_out;        // Shift register for output
-    logic [7:0] shift_in;         // Shift register for input
-    logic       sclk_phase;       // SCLK phase toggle
-    logic       is_write;         // Latched write flag
-    logic [15:0] addr_latch;      // Latched address (16-bit)
-    logic [7:0] wdata_latch;      // Latched write data
+    logic [2:0]  bit_cnt;          // Bit counter (0-7)
+    logic [7:0]  shift_out;        // Shift register for output
+    logic [7:0]  shift_in;         // Shift register for input
+    logic        sclk_phase;       // SCLK phase toggle
+    logic        is_write;         // Latched write flag
+    logic [15:0] addr_latch;       // Latched address (16-bit)
+    logic [15:0] wdata_latch;      // Latched write data (16-bit)
+    logic [7:0]  rdata_lo;         // Received low byte
 
     // SPI clock generation (clk/2)
     // SCLK toggles every CPU cycle when active
@@ -77,14 +81,15 @@ module spi_memory_controller (
             spi_cs_n    <= 1'b1;
             spi_sclk    <= 1'b0;
             mem_ready   <= 1'b0;
-            mem_rdata   <= 8'h00;
+            mem_rdata   <= 16'h0000;
             bit_cnt     <= 3'd0;
             shift_out   <= 8'h00;
             shift_in    <= 8'h00;
             sclk_phase  <= 1'b0;
             is_write    <= 1'b0;
             addr_latch  <= 16'h0000;
-            wdata_latch <= 8'h00;
+            wdata_latch <= 16'h0000;
+            rdata_lo    <= 8'h00;
         end else begin
             // Default: clear ready pulse
             mem_ready <= 1'b0;
@@ -109,7 +114,7 @@ module spi_memory_controller (
                     shift_out   <= mem_we ? 8'h02 : 8'h03;
                 end
 
-                SEND_CMD, SEND_ADDR_HI, SEND_ADDR_LO, SEND_DATA: begin
+                SEND_CMD, SEND_ADDR_HI, SEND_ADDR_LO, SEND_DATA_LO, SEND_DATA_HI: begin
                     sclk_phase <= ~sclk_phase;
                     spi_sclk   <= ~sclk_phase;  // Generate SCLK
 
@@ -121,9 +126,10 @@ module spi_memory_controller (
                             // Byte complete, prepare next
                             bit_cnt <= 3'd7;
                             case (state)
-                                SEND_CMD:     shift_out <= addr_latch[15:8];  // Load addr_hi (16-bit addressing)
-                                SEND_ADDR_HI: shift_out <= addr_latch[7:0];   // Load addr_lo
-                                SEND_ADDR_LO: shift_out <= wdata_latch;       // Load write data
+                                SEND_CMD:     shift_out <= addr_latch[15:8];    // Load addr_hi
+                                SEND_ADDR_HI: shift_out <= addr_latch[7:0];     // Load addr_lo
+                                SEND_ADDR_LO: shift_out <= wdata_latch[7:0];    // Load data_lo (little-endian)
+                                SEND_DATA_LO: shift_out <= wdata_latch[15:8];   // Load data_hi
                                 default:      shift_out <= 8'h00;
                             endcase
                         end else begin
@@ -132,7 +138,7 @@ module spi_memory_controller (
                     end
                 end
 
-                RECV_DATA: begin
+                RECV_DATA_LO: begin
                     sclk_phase <= ~sclk_phase;
                     spi_sclk   <= ~sclk_phase;
 
@@ -144,8 +150,29 @@ module spi_memory_controller (
                     if (sclk_phase) begin
                         // Falling edge: check if done
                         if (bit_cnt == 3'd0) begin
-                            // Byte received - shift_in already has all 8 bits
-                            mem_rdata <= shift_in;
+                            // Low byte received - store it
+                            rdata_lo <= shift_in;
+                            bit_cnt <= 3'd7;
+                        end else begin
+                            bit_cnt <= bit_cnt - 3'd1;
+                        end
+                    end
+                end
+
+                RECV_DATA_HI: begin
+                    sclk_phase <= ~sclk_phase;
+                    spi_sclk   <= ~sclk_phase;
+
+                    if (~sclk_phase) begin
+                        // Rising edge: sample MISO
+                        shift_in <= {shift_in[6:0], spi_miso};
+                    end
+
+                    if (sclk_phase) begin
+                        // Falling edge: check if done
+                        if (bit_cnt == 3'd0) begin
+                            // High byte received - combine with low byte (little-endian)
+                            mem_rdata <= {shift_in, rdata_lo};
                         end else begin
                             bit_cnt <= bit_cnt - 3'd1;
                         end
@@ -192,18 +219,28 @@ module spi_memory_controller (
             SEND_ADDR_LO: begin
                 if (sclk_phase && bit_cnt == 3'd0) begin
                     if (is_write)
-                        next_state = SEND_DATA;
+                        next_state = SEND_DATA_LO;  // Write: send low byte first
                     else
-                        next_state = RECV_DATA;
+                        next_state = RECV_DATA_LO;  // Read: receive low byte first
                 end
             end
 
-            SEND_DATA: begin
+            SEND_DATA_LO: begin
+                if (sclk_phase && bit_cnt == 3'd0)
+                    next_state = SEND_DATA_HI;  // Then send high byte
+            end
+
+            SEND_DATA_HI: begin
                 if (sclk_phase && bit_cnt == 3'd0)
                     next_state = DONE;
             end
 
-            RECV_DATA: begin
+            RECV_DATA_LO: begin
+                if (sclk_phase && bit_cnt == 3'd0)
+                    next_state = RECV_DATA_HI;  // Then receive high byte
+            end
+
+            RECV_DATA_HI: begin
                 if (sclk_phase && bit_cnt == 3'd0)
                     next_state = DONE;
             end

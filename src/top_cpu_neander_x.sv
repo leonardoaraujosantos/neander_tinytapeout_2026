@@ -1,34 +1,34 @@
 // ============================================================================
-// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (LCC + X/Y/FP Register + Carry Flag)
+// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (16-bit Data Width)
 // ============================================================================
 
 module cpu_top (
     input  logic        clk,
     input  logic        reset,
 
-    // Interface com RAM (SPI memory controller handshaking) - 16-bit addressing
+    // Interface with RAM (SPI memory controller handshaking) - 16-bit addressing, 16-bit data
     output logic [15:0] mem_addr,
-    output logic [7:0]  mem_data_out,
-    input  logic [7:0]  mem_data_in,
+    output logic [15:0] mem_data_out,
+    input  logic [15:0] mem_data_in,
     output logic        mem_write,
     output logic        mem_read,
     output logic        mem_req,       // Memory access request (to SPI controller)
     input  logic        mem_ready,     // Memory access complete (from SPI controller)
 
-    // Interface com I/O
+    // Interface with I/O (remains 8-bit for peripheral compatibility)
     input  logic [7:0] io_in,
     input  logic [7:0] io_status,
     output logic [7:0] io_out,
     output logic       io_write,
 
-    // Debug - 16-bit PC, SP, FP for 64KB addressing
+    // Debug - 16-bit registers
     output logic [15:0] dbg_pc,
-    output logic [7:0]  dbg_ac,
+    output logic [15:0] dbg_ac,    // 16-bit AC
     output logic [7:0]  dbg_ri,
     output logic [15:0] dbg_sp,
-    output logic [7:0]  dbg_x,     // X register debug output
-    output logic [7:0]  dbg_y,     // Y register debug output
-    output logic [15:0] dbg_fp     // FP register debug output
+    output logic [15:0] dbg_x,     // 16-bit X register debug output
+    output logic [15:0] dbg_y,     // 16-bit Y register debug output
+    output logic [15:0] dbg_fp     // 16-bit FP register debug output
 );
 
     logic       pc_inc, pc_load;
