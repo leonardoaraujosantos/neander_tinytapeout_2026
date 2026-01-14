@@ -18,7 +18,7 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - **Frame Pointer**: FP register (16-bit) with TSF, TFS, PUSH_FP, POP_FP for stack frame management
 - **Indexed Addressing**: LDA/STA with ,X, ,Y, and ,FP modes for array/pointer/local variable access
 - **Hardware Multiplication**: MUL instruction (AC * X -> Y:AC) with 16-bit result
-- **Hardware Division**: DIV and MOD instructions for integer division and modulo operations
+- **Hardware Division**: DIV and MOD instructions using sequential divider (8 cycles, area-efficient)
 
 ### Key Features
 
@@ -36,7 +36,7 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
   - Frame pointer operations (TSF, TFS, PUSH_FP, POP_FP)
   - Indexed addressing modes (LDA/STA with ,X, ,Y, and ,FP)
   - Hardware multiplication (MUL: AC * X -> Y:AC, 16-bit result)
-  - Hardware division (DIV, MOD: AC / X with quotient and remainder)
+  - Hardware division (DIV, MOD: sequential divider, 8 cycles for area efficiency)
   - Multi-byte arithmetic support (ADC, SBC for 16/32-bit operations)
 - FSM-based control unit (~90 states for 16-bit address handling)
 - SPI memory interface (64KB via external SPI SRAM, only 4 pins)

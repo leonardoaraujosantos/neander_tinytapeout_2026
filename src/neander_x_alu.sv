@@ -13,7 +13,9 @@
 //   1000: NEG  - 0 - a = -a      (two's complement negation)
 //   1001: MUL  - a * b           (16-bit result: mul_high:result)
 //   1010: DIV  - a / b           (quotient in result, remainder in mul_high)
+//                                 ** Now uses sequential divider (8 cycles) **
 //   1011: MOD  - a % b           (remainder in result, quotient in mul_high)
+//                                 ** Now uses sequential divider (8 cycles) **
 //   1100: ADC  - a + b + carry   (add with carry for multi-byte arithmetic)
 //   1101: SBC  - a - b - carry   (subtract with borrow for multi-byte arithmetic)
 //   1110: ASR  - a >> 1 (arith)  (arithmetic shift right, preserves sign bit)
@@ -24,8 +26,12 @@ module neander_alu (
     input  logic [7:0] b,
     input  logic [3:0] alu_op,  // Extended to 4 bits for NEG and future ops
     input  logic       carry_in, // Carry input for ADC/SBC operations
+    // Sequential divider interface (results from external sequential_divider module)
+    input  logic [7:0] div_quotient,   // Quotient from sequential divider
+    input  logic [7:0] div_remainder,  // Remainder from sequential divider
+    input  logic       div_by_zero,    // Division by zero flag from sequential divider
     output logic [7:0] result,
-    output logic [7:0] mul_high,  // High byte of multiplication result
+    output logic [7:0] mul_high,  // High byte of multiplication result (or div remainder/quotient)
     output logic       carry_out  // Carry/borrow flag output
 );
     logic [8:0] temp;  // 9-bit for carry detection
@@ -81,26 +87,16 @@ module neander_alu (
                 carry_out = (mul_temp[15:8] != 8'h00);  // Carry set if overflow (high byte non-zero)
             end
             4'b1010: begin  // DIV (a / b = quotient, a % b = remainder)
-                if (b != 8'h00) begin
-                    result = a / b;        // Quotient to AC
-                    mul_high = a % b;      // Remainder to Y (reusing mul_high output)
-                    carry_out = 1'b0;      // No error
-                end else begin
-                    result = 8'hFF;        // Division by zero: return max value
-                    mul_high = a;          // Preserve dividend in remainder
-                    carry_out = 1'b1;      // Set carry to indicate division by zero error
-                end
+                // Uses sequential divider results (8 cycles, area-efficient)
+                result = div_quotient;     // Quotient to AC
+                mul_high = div_remainder;  // Remainder to Y (reusing mul_high output)
+                carry_out = div_by_zero;   // Set carry if division by zero
             end
             4'b1011: begin  // MOD (a % b = remainder, a / b = quotient)
-                if (b != 8'h00) begin
-                    result = a % b;        // Remainder to AC
-                    mul_high = a / b;      // Quotient to Y (reusing mul_high output)
-                    carry_out = 1'b0;      // No error
-                end else begin
-                    result = a;            // Division by zero: return dividend
-                    mul_high = 8'hFF;      // Max value in quotient
-                    carry_out = 1'b1;      // Set carry to indicate division by zero error
-                end
+                // Uses sequential divider results (8 cycles, area-efficient)
+                result = div_remainder;    // Remainder to AC
+                mul_high = div_quotient;   // Quotient to Y (reusing mul_high output)
+                carry_out = div_by_zero;   // Set carry if division by zero
             end
             4'b1100: begin  // ADC (a + b + carry_in) - Add with Carry
                 temp = {1'b0, a} + {1'b0, b} + {8'b0, carry_in};

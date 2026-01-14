@@ -9,6 +9,7 @@ TOPLEVEL_LANG ?= verilog
 VERILOG_SOURCES += $(PWD)/../src/neander_x_alu.sv
 VERILOG_SOURCES += $(PWD)/../src/neander_x_datapath.sv
 VERILOG_SOURCES += $(PWD)/../src/neander_x_control_unit.sv
+VERILOG_SOURCES += $(PWD)/../src/sequential_divider.sv
 VERILOG_SOURCES += $(PWD)/../src/top_cpu_neander_x.sv
 VERILOG_SOURCES += $(PWD)/../src/spi_memory_controller.sv
 VERILOG_SOURCES += $(PWD)/../src/spi_sram_model.sv
