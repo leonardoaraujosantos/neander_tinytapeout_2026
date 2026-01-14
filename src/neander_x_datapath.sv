@@ -62,15 +62,22 @@ module rdm_reg (
     input  logic        reset,
     input  logic        load_lo,      // Load low byte from data_in
     input  logic        load_hi,      // Load high byte from data_in
+    input  logic        load_lo_alt,  // Load low byte from alternate source (for indirect addressing)
+    input  logic        rdm_inc,      // Increment RDM by 1 (for indirect addressing)
     input  logic [7:0]  data_in,      // 8-bit data from memory
+    input  logic [7:0]  alt_data,     // Alternate data source (swap_temp for indirect)
     output logic [15:0] value
 );
     always_ff @(posedge clk or posedge reset) begin
         if (reset)
             value <= 16'h0000;
+        else if (rdm_inc)
+            value <= value + 16'h0001;  // Increment RDM by 1
         else begin
             if (load_lo)
                 value[7:0] <= data_in;
+            if (load_lo_alt)
+                value[7:0] <= alt_data;   // Load from alternate source (swap_temp)
             if (load_hi)
                 value[15:8] <= data_in;
         end
@@ -157,13 +164,14 @@ module nzc_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
-// X Index Register (Load & Increment)
+// X Index Register (Load, Increment & Decrement)
 // ---------------------------------------------------------------------------
 module x_reg (
     input  logic       clk,
     input  logic       reset,
     input  logic       x_load,
     input  logic       x_inc,
+    input  logic       x_dec,
     input  logic [7:0] data_in,
     output logic [7:0] x_value
 );
@@ -174,17 +182,20 @@ module x_reg (
             x_value <= data_in;
         else if (x_inc)
             x_value <= x_value + 8'h01;
+        else if (x_dec)
+            x_value <= x_value - 8'h01;
     end
 endmodule
 
 // ---------------------------------------------------------------------------
-// Y Index Register (Load & Increment)
+// Y Index Register (Load, Increment & Decrement)
 // ---------------------------------------------------------------------------
 module y_reg (
     input  logic       clk,
     input  logic       reset,
     input  logic       y_load,
     input  logic       y_inc,
+    input  logic       y_dec,
     input  logic [7:0] data_in,
     output logic [7:0] y_value
 );
@@ -195,6 +206,8 @@ module y_reg (
             y_value <= data_in;
         else if (y_inc)
             y_value <= y_value + 8'h01;
+        else if (y_dec)
+            y_value <= y_value - 8'h01;
     end
 endmodule
 
@@ -271,15 +284,17 @@ module neander_datapath (
     input  logic       sp_inc,    // Stack pointer increment (POP/RET)
     input  logic       sp_dec,    // Stack pointer decrement (PUSH/CALL)
     input  logic [1:0] mem_data_sel, // Memory data select: 00=AC, 01=PC, 10=X, 11=Y
-    input  logic [1:0] alu_b_sel, // ALU B input select: 00=mem_data, 01=constant 1 (INC/DEC), 10=X (MUL)
+    input  logic [2:0] alu_b_sel, // ALU B input select: 000=mem_data, 001=constant 1 (INC/DEC), 010=X (MUL), 011=Y
     // X Register Extension signals
     input  logic       x_load,    // Load X register
     input  logic       x_inc,     // Increment X register
+    input  logic       x_dec,     // Decrement X register (DEX)
     input  logic       x_to_ac,   // Transfer X to AC (TXA)
     input  logic       indexed_mode, // Use indexed addressing (addr + X)
     // Y Register Extension signals
     input  logic       y_load,    // Load Y register
     input  logic       y_inc,     // Increment Y register
+    input  logic       y_dec,     // Decrement Y register (DEY)
     input  logic       y_to_ac,   // Transfer Y to AC (TYA)
     input  logic       indexed_mode_y, // Use indexed addressing (addr + Y)
     input  logic       mul_to_y,  // Load Y with high byte of multiplication result
@@ -289,7 +304,16 @@ module neander_datapath (
     input  logic       fp_load_hi,   // Load FP high byte (for POP_FP)
     input  logic       sp_load,      // Load SP from FP (for TFS)
     input  logic       indexed_mode_fp, // Use indexed addressing (addr + FP)
+    input  logic       indexed_mode_sp, // Use indexed addressing (addr + SP)
     input  logic [2:0] mem_data_sel_ext, // Extended: 000=AC, 001=PC_LO, 010=X, 011=Y, 100=FP_LO, 101=PC_HI, 110=FP_HI
+    // Swap instruction support
+    input  logic       swap_temp_load,   // Load swap temp register from AC
+    input  logic       x_from_temp,      // Load X from swap temp (for SWPX)
+    input  logic       y_from_temp,      // Load Y from swap temp (for SWPY)
+    // Indirect addressing support
+    input  logic       ind_temp_load,    // Load swap_temp from mem_data_in (for indirect)
+    input  logic       rdm_lo_from_temp, // Load RDM low byte from swap_temp
+    input  logic       rdm_inc,          // Increment RDM by 1
 
     // External RAM Interface (16-bit addressing)
     input  logic [7:0]  mem_data_in,
@@ -323,6 +347,7 @@ module neander_datapath (
     logic [15:0] pc, rem, rdm, sp, fp;
     // 8-bit registers (data path remains 8-bit)
     logic [7:0] ri, ac, x, y;
+    logic [7:0] swap_temp;  // Temporary register for SWPX/SWPY instructions
     logic [7:0] alu_res;
     logic [7:0] alu_mul_high;  // High byte of multiplication result from ALU
     logic       alu_carry;  // Carry output from ALU
@@ -332,8 +357,8 @@ module neander_datapath (
     logic [15:0] addr_indexed_y; // Address + Y for indexed modes
     logic [15:0] addr_indexed_fp; // Address + FP for indexed modes
     logic [7:0] ac_in;
-    logic [7:0] x_in;     // X register input (from AC for TAX, or from memory for LDX)
-    logic [7:0] y_in;     // Y register input (from AC for TAY, or from memory for LDY)
+    logic [7:0] x_in;     // X register input (from AC for TAX, from swap_temp for SWPX, or from memory for LDX)
+    logic [7:0] y_in;     // Y register input (from AC for TAY, from swap_temp for SWPY, or from memory for LDY)
     logic       N_in, Z_in, C_in;
 
     // Indexed address calculation: addr + X or addr + Y or addr + FP
@@ -343,11 +368,12 @@ module neander_datapath (
     assign addr_indexed_fp = rdm + fp;
 
     // Direct assignments
-    // Memory address: use indexed address when indexed_mode, indexed_mode_y, or indexed_mode_fp is set
-    // X and Y are 8-bit, zero-extended for 16-bit addition; FP is 16-bit
-    assign mem_addr = indexed_mode_fp ? (rem + fp) :
-                      (indexed_mode_y ? (rem + {8'h00, y}) :
-                       (indexed_mode ? (rem + {8'h00, x}) : rem));
+    // Memory address: use indexed address when indexed_mode, indexed_mode_y, indexed_mode_fp, or indexed_mode_sp is set
+    // X and Y are 8-bit, zero-extended for 16-bit addition; FP and SP are 16-bit
+    assign mem_addr = indexed_mode_sp ? (rem + sp) :
+                      (indexed_mode_fp ? (rem + fp) :
+                       (indexed_mode_y ? (rem + {8'h00, y}) :
+                        (indexed_mode ? (rem + {8'h00, x}) : rem)));
     // Memory data output MUX (extended for 16-bit PC/FP):
     // 000=AC, 001=PC_LO, 010=X, 011=Y, 100=FP_LO, 101=PC_HI, 110=FP_HI
     always_comb begin
@@ -394,29 +420,27 @@ module neander_datapath (
     // Input can be from memory (LDX), immediate (LDXI), or AC (TAX)
     x_reg u_x (
         .clk(clk), .reset(reset),
-        .x_load(x_load), .x_inc(x_inc),
+        .x_load(x_load), .x_inc(x_inc), .x_dec(x_dec),
         .data_in(x_in), .x_value(x)
     );
 
-    // X register input mux: select between mem_data_in (LDX/LDXI) and AC (TAX)
-    // When opcode is 0x7 and sub_opcode is 0xD (TAX), input comes from AC
-    // Otherwise (LDX/LDXI), input comes from memory/immediate
-    assign x_in = (opcode == 4'h7 && sub_opcode == 4'hD) ? ac : mem_data_in;
+    // X register input mux: select between mem_data_in (LDX/LDXI), AC (TAX), or swap_temp (SWPX)
+    // Priority: x_from_temp > TAX > LDX/LDXI
+    assign x_in = x_from_temp ? swap_temp :
+                  (opcode == 4'h7 && sub_opcode == 4'hD) ? ac : mem_data_in;
 
     // Y Index Register
     // Input can be from memory (LDY), immediate (LDYI), or AC (TAY)
     y_reg u_y (
         .clk(clk), .reset(reset),
-        .y_load(y_load), .y_inc(y_inc),
+        .y_load(y_load), .y_inc(y_inc), .y_dec(y_dec),
         .data_in(y_in), .y_value(y)
     );
 
-    // Y register input mux: select between mem_data_in (LDY/LDYI), AC (TAY), or mul_high (MUL)
-    // Priority: mul_to_y > TAY > LDY/LDYI
-    // When mul_to_y is set, input comes from ALU mul_high (MUL instruction)
-    // When opcode is 0x0 and sub_opcode is 0x3 (TAY), input comes from AC
-    // Otherwise (LDY/LDYI), input comes from memory/immediate
-    assign y_in = mul_to_y ? alu_mul_high :
+    // Y register input mux: select between mul_high (MUL), AC (TAY), swap_temp (SWPY), or mem_data_in
+    // Priority: y_from_temp > mul_to_y > TAY > LDY/LDYI
+    assign y_in = y_from_temp ? swap_temp :
+                  mul_to_y ? alu_mul_high :
                   (opcode == 4'h0 && sub_opcode == 4'h3) ? ac : mem_data_in;
 
     // FP Frame Pointer Register - 16-bit
@@ -431,6 +455,18 @@ module neander_datapath (
         .fp_value(fp)
     );
 
+    // Swap temp register - used for SWPX/SWPY atomic swap operations and indirect addressing
+    // For SWPX/SWPY: Stores AC value temporarily while loading X/Y into AC
+    // For indirect addressing: Stores intermediate pointer low byte from memory
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            swap_temp <= 8'h00;
+        else if (swap_temp_load)
+            swap_temp <= ac;
+        else if (ind_temp_load)
+            swap_temp <= mem_data_in;  // Load from memory for indirect addressing
+    end
+
     mux_addr u_mux (
         .sel(addr_sel), .pc(pc), .rdm(rdm), .sp(sp), .out(addr_mux)
     );
@@ -443,11 +479,15 @@ module neander_datapath (
 
     // RDM register - 16-bit with separate low/high byte loading
     // Used for fetching 16-bit addresses in two 8-bit memory reads
+    // Extended with indirect addressing support (load from temp, increment)
     rdm_reg u_rdm (
         .clk(clk), .reset(reset),
         .load_lo(rdm_load & mem_read),      // Load low byte when rdm_load & mem_read
         .load_hi(rdm_load_hi & mem_read),   // Load high byte when rdm_load_hi & mem_read
+        .load_lo_alt(rdm_lo_from_temp),     // Load low byte from swap_temp (indirect addressing)
+        .rdm_inc(rdm_inc),                  // Increment RDM by 1 (indirect addressing)
         .data_in(mem_data_in),
+        .alt_data(swap_temp),               // Alternate source: swap_temp
         .value(rdm)
     );
 
@@ -457,12 +497,13 @@ module neander_datapath (
         .data_in(rdm[7:0]), .value(ri)
     );
 
-    // ALU B input MUX: select between mem_data_in (00), constant 1 (01) for INC/DEC, X (10) for MUL
+    // ALU B input MUX: select between mem_data_in (000), constant 1 (001) for INC/DEC, X (010) for MUL/ADDX, Y (011) for ADDY
     always_comb begin
         case (alu_b_sel)
-            2'b00:   alu_b_in = mem_data_in;  // Default: memory data
-            2'b01:   alu_b_in = 8'h01;        // Constant 1 for INC/DEC
-            2'b10:   alu_b_in = x;            // X register for MUL
+            3'b000:  alu_b_in = mem_data_in;  // Default: memory data
+            3'b001:  alu_b_in = 8'h01;        // Constant 1 for INC/DEC
+            3'b010:  alu_b_in = x;            // X register for MUL, ADDX, SUBX, etc.
+            3'b011:  alu_b_in = y;            // Y register for ADDY, SUBY
             default: alu_b_in = mem_data_in;
         endcase
     end
@@ -482,8 +523,8 @@ module neander_datapath (
             // TYA: Transfer Y to AC
             ac_in = y;
         end
-        else if (opcode == 4'h2 || opcode == 4'hE) begin
-            // LDA or LDI (including indexed LDA when sub_opcode[0]=1 or sub_opcode[1]=1)
+        else if (opcode == 4'h2 || (opcode == 4'hE && sub_opcode == 4'h0)) begin
+            // LDA or LDI (0xE0 only - MULI/DIVI/CMPI use ALU result)
             ac_in = mem_data_in;
         end
         else if (opcode == 4'h7 && sub_opcode == 4'h1) begin

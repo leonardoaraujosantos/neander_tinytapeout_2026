@@ -177,12 +177,71 @@ occupies the upper region of memory (addresses 0xFF downward).
 **PUSH (0x70):** Decrements SP first, then writes AC to MEM[SP]
 **POP (0x71):** Reads MEM[SP] to AC, then increments SP. Updates N and Z flags.
 
-### Reserved for Future Implementation
+### Subroutine Operations
 
 | Opcode (Hex) | Mnemonic | Operation | Description |
 |--------------|----------|-----------|-------------|
-| 0x72 | CALL addr | PUSH PC+2; PC <- addr | Call subroutine |
+| 0x72 | CALL addr | PUSH PC; PC <- addr | Call subroutine |
 | 0x73 | RET | POP to PC | Return from subroutine |
+
+### LCC Compiler Extension Instructions
+
+These instructions were added to support the LCC C compiler backend for NEANDER-X.
+
+#### Register Decrement Operations
+
+| Opcode | Mnemonic | Operation | Description |
+|--------|----------|-----------|-------------|
+| 0x18 | DEX | X <- X - 1 | Decrement X register |
+| 0x19 | DEY | Y <- Y - 1 | Decrement Y register |
+
+#### Register-to-Register ALU Operations (Single Cycle)
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x32 | ADDX | AC <- AC + X | N, Z, C |
+| 0x33 | SUBX | AC <- AC - X | N, Z, C |
+| 0x34 | ADDY | AC <- AC + Y | N, Z, C |
+| 0x35 | SUBY | AC <- AC - Y | N, Z, C |
+| 0x42 | ORX | AC <- AC OR X | N, Z |
+| 0x43 | XORX | AC <- AC XOR X | N, Z |
+| 0x52 | ANDX | AC <- AC AND X | N, Z |
+
+#### Swap Operations
+
+| Opcode | Mnemonic | Operation | Description |
+|--------|----------|-----------|-------------|
+| 0x1A | SWPX | AC <-> X | Swap accumulator and X |
+| 0x1B | SWPY | AC <-> Y | Swap accumulator and Y |
+
+#### Immediate Operations
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0xE1 | CMPI imm | AC - imm (flags only) | N, Z, C |
+| 0xE2 | MULI imm | Y:AC <- AC * imm | N, Z, C |
+| 0xE3 | DIVI imm | AC <- AC / imm; Y <- AC % imm | N, Z, C |
+
+#### SP-Relative Addressing
+
+| Opcode | Mnemonic | Operation | Description |
+|--------|----------|-----------|-------------|
+| 0x28 | LDA off,SP | AC <- MEM[SP + off] | Load from stack-relative address |
+| 0x17 | STA off,SP | MEM[SP + off] <- AC | Store to stack-relative address |
+
+#### Indirect Addressing Modes
+
+| Opcode | Mnemonic | Operation | Description |
+|--------|----------|-----------|-------------|
+| 0x26 | LDA (addr) | AC <- MEM[MEM[addr]] | Indirect load |
+| 0x16 | STA (addr) | MEM[MEM[addr]] <- AC | Indirect store |
+| 0x27 | LDA (addr),Y | AC <- MEM[MEM[addr] + Y] | Post-indexed indirect |
+
+#### Decrement and Branch
+
+| Opcode | Mnemonic | Operation | Description |
+|--------|----------|-----------|-------------|
+| 0x88 | DECJNZ addr | AC <- AC - 1; if AC != 0 then PC <- addr | Decrement and jump if not zero |
 
 ### Instruction Encoding Examples (16-bit Addressing)
 
