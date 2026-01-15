@@ -2,7 +2,7 @@
 
 # NEANDER-X Processor
 
-A SystemVerilog implementation of the NEANDER-X educational 8-bit processor for the [TinyTapeout](https://tinytapeout.com) VLSI course.
+A SystemVerilog implementation of the NEANDER-X educational 16-bit processor for the [TinyTapeout](https://tinytapeout.com) VLSI course.
 
 ## Overview
 
@@ -17,14 +17,14 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - **Y Register**: Second index register with LDY, STY, LDYI, TAY, TYA, INY
 - **Frame Pointer**: FP register (16-bit) with TSF, TFS, PUSH_FP, POP_FP for stack frame management
 - **Indexed Addressing**: LDA/STA with ,X, ,Y, and ,FP modes for array/pointer/local variable access
-- **Hardware Multiplication**: MUL instruction using sequential multiplier (8 cycles, area-efficient)
-- **Hardware Division**: DIV and MOD instructions using sequential divider (8 cycles, area-efficient)
+- **Hardware Multiplication**: MUL instruction using sequential multiplier (16 cycles for 16-bit operands, area-efficient)
+- **Hardware Division**: DIV and MOD instructions using sequential divider (16 cycles for 16-bit operands, area-efficient)
 
 ### Key Features
 
-- 8-bit data width with **16-bit address space (64KB)**
+- **16-bit data width** with **16-bit address space (64KB)**
 - Single accumulator architecture with X, Y, and FP registers
-- **16-bit registers**: PC, SP, FP, REM, RDM for full address range
+- **16-bit registers**: AC, X, Y, PC, SP, FP, REM, RDM for full 16-bit arithmetic
 - Three condition flags (N: Negative, Z: Zero, C: Carry)
 - 60+ instructions including:
   - Stack operations (PUSH/POP/CALL/RET)
@@ -35,8 +35,8 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
   - Y register operations (LDY, STY, LDYI, TAY, TYA, INY)
   - Frame pointer operations (TSF, TFS, PUSH_FP, POP_FP)
   - Indexed addressing modes (LDA/STA with ,X, ,Y, and ,FP)
-  - Hardware multiplication (MUL: sequential multiplier, 8 cycles for area efficiency)
-  - Hardware division (DIV, MOD: sequential divider, 8 cycles for area efficiency)
+  - Hardware multiplication (MUL: sequential multiplier, 16 cycles for area efficiency)
+  - Hardware division (DIV, MOD: sequential divider, 16 cycles for area efficiency)
   - Multi-byte arithmetic support (ADC, SBC for 16/32-bit operations)
 - FSM-based control unit (~90 states for 16-bit address handling)
 - SPI memory interface (64KB via external SPI SRAM, only 4 pins)
@@ -242,15 +242,15 @@ func:   PUSH_FP         ; Save caller's FP
 
 | Opcode | Mnemonic | Operation | Flags |
 |--------|----------|-----------|-------|
-| 0x09 | MUL | Y:AC <- AC * X (16-bit result) | N, Z, C |
+| 0x09 | MUL | Y:AC <- AC * X (32-bit result) | N, Z, C |
 | 0x0E | DIV | AC <- AC / X (quotient), Y <- remainder | N, Z, C |
 | 0x0F | MOD | AC <- AC % X (remainder), Y <- quotient | N, Z, C |
 
-**MUL**: Multiplies AC by X using a combinational 8x8 multiplier. The 16-bit result is stored with the high byte in Y and the low byte in AC. The carry flag is set if the result overflows 8 bits (high byte != 0).
+**MUL**: Multiplies AC by X using a sequential 16x16 multiplier (16 cycles). The 32-bit result is stored with the high 16 bits in Y and the low 16 bits in AC. The carry flag is set if the result overflows 16 bits (high word != 0).
 
-**DIV**: Divides AC by X. The quotient is stored in AC and the remainder in Y. On division by zero, the carry flag is set as an error indicator, AC is set to 0xFF, and Y preserves the original dividend.
+**DIV**: Divides AC by X using a sequential 16/16 divider (16 cycles). The quotient is stored in AC and the remainder in Y. On division by zero, the carry flag is set as an error indicator, AC is set to 0xFFFF, and Y preserves the original dividend.
 
-**MOD**: Computes AC modulo X. The remainder is stored in AC and the quotient in Y. On division by zero, the carry flag is set as an error indicator, AC preserves the original dividend, and Y is set to 0xFF.
+**MOD**: Computes AC modulo X using a sequential 16/16 divider (16 cycles). The remainder is stored in AC and the quotient in Y. On division by zero, the carry flag is set as an error indicator, AC preserves the original dividend, and Y is set to 0xFFFF.
 
 ```assembly
 ; Example: Compute 17 / 5 = 3 remainder 2
@@ -392,12 +392,12 @@ graph TB
         PC[PC<br/>Program Counter<br/>16-bit]
         SP[SP<br/>Stack Pointer<br/>16-bit]
         FP[FP<br/>Frame Pointer<br/>16-bit]
-        X[X<br/>Index Register<br/>8-bit]
-        Y[Y<br/>Index Register<br/>8-bit]
+        X[X<br/>Index Register<br/>16-bit]
+        Y[Y<br/>Index Register<br/>16-bit]
         RI[RI<br/>Instruction Reg<br/>8-bit]
         REM[REM<br/>Address Reg<br/>16-bit]
         RDM[RDM<br/>Data Reg<br/>16-bit]
-        AC[AC<br/>Accumulator<br/>8-bit]
+        AC[AC<br/>Accumulator<br/>16-bit]
         ALU[ALU<br/>+ - * & OR ^ ~ << >>]
         NZC[N Z C<br/>Flags]
         MUX[Address MUX<br/>PC/RDM/SP<br/>16-bit]
@@ -423,7 +423,7 @@ graph TB
     Y --> IDX
     FP --> IDX
     IDX -->|16-bit address| RAM
-    RAM -->|8-bit data| RDM
+    RAM -->|16-bit data| RDM
     RDM --> RI
     AC --> ALU
     X --> ALU
@@ -455,10 +455,10 @@ tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
 │   │   ├── sp_reg (Stack Pointer, 16-bit, reset=0x00FF)
 │   │   ├── fp_reg (Frame Pointer, 16-bit)
 │   │   ├── rdm_reg (Data Register, 16-bit, separate lo/hi loading)
-│   │   ├── x_reg (X Index Register, 8-bit)
-│   │   ├── y_reg (Y Index Register, 8-bit)
+│   │   ├── x_reg (X Index Register, 16-bit)
+│   │   ├── y_reg (Y Index Register, 16-bit)
 │   │   ├── mux_addr (3-way Address MUX, 16-bit)
-│   │   ├── generic_reg (RI, AC - 8-bit)
+│   │   ├── generic_reg (RI - 8-bit, AC - 16-bit)
 │   │   ├── generic_reg_16 (REM - 16-bit)
 │   │   ├── neander_alu (ADD, ADC, SUB, SBC, MUL, DIV, MOD, AND, OR, XOR, NOT, SHL, SHR, ASR, NEG)
 │   │   └── nzc_reg (N, Z, C Flags)
@@ -466,8 +466,8 @@ tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
 │
 └── spi_memory_controller (spi_memory_controller.sv)
     ├── SPI Master interface (directly to external SRAM)
-    ├── 16-bit address support (addr[15:0])
-    ├── 8-state FSM (IDLE → CMD → ADDR_HI → ADDR_LO → DATA → DONE)
+    ├── 16-bit address, 16-bit data support
+    ├── FSM handles 2-byte transfers (little-endian)
     └── ~70 CPU cycles per memory access
 ```
 
@@ -480,9 +480,9 @@ tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
 | FP | 16-bit | Frame Pointer (for local variable access) |
 | REM | 16-bit | Memory Address Register |
 | RDM | 16-bit | Memory Data Register (holds fetched addresses) |
-| AC | 8-bit | Accumulator |
-| X | 8-bit | Index Register X |
-| Y | 8-bit | Index Register Y |
+| AC | 16-bit | Accumulator |
+| X | 16-bit | Index Register X |
+| Y | 16-bit | Index Register Y |
 | RI | 8-bit | Instruction Register (opcode) |
 | N, Z, C | 1-bit | Condition Flags |
 

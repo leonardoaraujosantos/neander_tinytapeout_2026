@@ -21,13 +21,13 @@ module neander_tb_wrapper (
     output logic [7:0]  io_out,
     output logic        io_write,
 
-    // Debug outputs (16-bit for PC, SP, FP)
+    // Debug outputs (16-bit for PC, SP, FP, AC, X, Y)
     output logic [15:0] dbg_pc,
-    output logic [7:0]  dbg_ac,
+    output logic [15:0] dbg_ac,
     output logic [7:0]  dbg_ri,
     output logic [15:0] dbg_sp,
-    output logic [7:0]  dbg_x,
-    output logic [7:0]  dbg_y,
+    output logic [15:0] dbg_x,
+    output logic [15:0] dbg_y,
     output logic [15:0] dbg_fp,
 
     // Memory read interface (for verification) - 16-bit address
@@ -38,7 +38,7 @@ module neander_tb_wrapper (
     output logic [15:0] cpu_mem_addr,
     output logic        cpu_mem_req,
     output logic        cpu_mem_ready,
-    output logic [7:0]  cpu_mem_data_in,
+    output logic [15:0] cpu_mem_data_in,
 
     // Debug signals for SPI controller (to trace address latching)
     output logic [15:0] spi_addr_latch,
@@ -46,11 +46,11 @@ module neander_tb_wrapper (
 );
 
     // ============================================================================
-    // CPU <-> SPI Controller Interface (16-bit address)
+    // CPU <-> SPI Controller Interface (16-bit address, 16-bit data)
     // ============================================================================
     logic [15:0] cpu_mem_addr_int;
-    logic [7:0]  cpu_mem_data_out;
-    logic [7:0]  cpu_mem_data_in_int;
+    logic [15:0] cpu_mem_data_out;
+    logic [15:0] cpu_mem_data_in_int;
     logic        cpu_mem_write;
     logic        cpu_mem_read;
     logic        cpu_mem_req_int;

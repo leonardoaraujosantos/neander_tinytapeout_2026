@@ -118,13 +118,17 @@ JUMP_OPCODES = {
     0x90, 0xA0, 0xB0, 0x72,
 }
 
-# Opcodes that take an immediate value or port (keep as 2 bytes)
-IMMEDIATE_OPCODES = {
-    0xE0,  # LDI
-    0x7C,  # LDXI
-    0x06,  # LDYI
-    0xD0,  # OUT
-    0xC0,  # IN
+# Opcodes that take a 16-bit immediate value (expand from 2 to 3 bytes)
+IMMEDIATE_16BIT_OPCODES = {
+    0xE0,  # LDI  (16-bit immediate)
+    0x7C,  # LDXI (16-bit immediate)
+    0x06,  # LDYI (16-bit immediate)
+}
+
+# Opcodes that take an 8-bit immediate/port (keep as 2 bytes)
+IMMEDIATE_8BIT_OPCODES = {
+    0xD0,  # OUT (port number)
+    0xC0,  # IN  (port number)
 }
 
 # Data area threshold
@@ -134,6 +138,11 @@ DATA_AREA_START = 0x40
 def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
     """
     Convert an old 8-bit address format program to 16-bit address format.
+
+    - Memory address opcodes: expand from 2 bytes to 3 bytes (addr8 -> addr_lo, addr_hi)
+    - 16-bit immediate opcodes (LDI, LDXI, LDYI): expand from 2 bytes to 3 bytes (imm8 -> imm_lo, imm_hi)
+    - 8-bit immediate opcodes (IN, OUT): keep as 2 bytes
+    - Single byte opcodes: keep as 1 byte
     """
     # First pass: build address mapping
     addr_map = {}
@@ -147,9 +156,12 @@ def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
         if opcode in MEMORY_ADDRESS_OPCODES:
             old_pos += 2
             new_pos += 3
-        elif opcode in IMMEDIATE_OPCODES:
+        elif opcode in IMMEDIATE_16BIT_OPCODES:
             old_pos += 2
-            new_pos += 2
+            new_pos += 3  # Expand 8-bit immediate to 16-bit
+        elif opcode in IMMEDIATE_8BIT_OPCODES:
+            old_pos += 2
+            new_pos += 2  # Keep as 2 bytes
         else:
             old_pos += 1
             new_pos += 1
@@ -174,7 +186,9 @@ def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
                     offset = addr - closest_start
                     new_addr = addr_map[closest_start] + offset
                 else:
-                    new_addr = addr
+                    # Address is in data area: remap to space out for 16-bit values
+                    # Each old data slot (1 byte) maps to 2 bytes in 16-bit mode
+                    new_addr = data_area_start + (addr - data_area_start) * 2
 
                 result.append(new_addr & 0xFF)
                 result.append((new_addr >> 8) & 0xFF)
@@ -182,7 +196,22 @@ def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
             else:
                 result.append(opcode)
                 i += 1
-        elif opcode in IMMEDIATE_OPCODES:
+        elif opcode in IMMEDIATE_16BIT_OPCODES:
+            # LDI, LDXI, LDYI: expand 8-bit immediate to 16-bit (sign-extend)
+            result.append(opcode)
+            if i + 1 < len(program):
+                imm_val = program[i + 1]
+                # Sign-extend: if bit 7 is set, the value is negative in 8-bit
+                # and should become a 16-bit negative (0xFF in high byte)
+                if imm_val & 0x80:
+                    imm_val = imm_val | 0xFF00  # Sign-extend to 16-bit
+                result.append(imm_val & 0xFF)       # imm_lo
+                result.append((imm_val >> 8) & 0xFF)  # imm_hi (0xFF for negative, 0x00 for positive)
+                i += 2
+            else:
+                i += 1
+        elif opcode in IMMEDIATE_8BIT_OPCODES:
+            # IN, OUT: keep as 2 bytes (8-bit port number)
             result.append(opcode)
             if i + 1 < len(program):
                 result.append(program[i + 1])

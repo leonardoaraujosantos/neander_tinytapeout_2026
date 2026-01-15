@@ -67,9 +67,11 @@ module rdm_reg (
     input  logic        reset,
     input  logic        load_lo,      // Load low byte from data_in (for address fetch)
     input  logic        load_hi,      // Load high byte from data_in (for address fetch)
+    input  logic        load_full,    // Load full 16-bit from data_full (for 16-bit memory)
     input  logic        load_lo_alt,  // Load full 16-bit from alternate source (for indirect addressing)
     input  logic        rdm_inc,      // Increment RDM by 1 (for indirect addressing)
     input  logic [7:0]  data_in,      // 8-bit data from memory (for address bytes)
+    input  logic [15:0] data_full,    // 16-bit data from memory (for 16-bit operations)
     input  logic [15:0] alt_data,     // Alternate data source (swap_temp for indirect, 16-bit)
     output logic [15:0] value
 );
@@ -78,6 +80,8 @@ module rdm_reg (
             value <= 16'h0000;
         else if (rdm_inc)
             value <= value + 16'h0001;  // Increment RDM by 1
+        else if (load_full)
+            value <= data_full;         // Load full 16-bit from memory
         else if (load_lo_alt)
             value <= alt_data;          // Load full 16-bit from alternate source (swap_temp)
         else begin
@@ -96,6 +100,7 @@ module pc_reg (
     input  logic        clk,
     input  logic        reset,
     input  logic        pc_inc,
+    input  logic        pc_inc_2,    // Increment by 2 (for 16-bit immediate fetch)
     input  logic        pc_load,
     input  logic [15:0] data_in,
     output logic [15:0] pc_value
@@ -105,6 +110,8 @@ module pc_reg (
             pc_value <= 16'h0000;
         else if (pc_load)
             pc_value <= data_in;
+        else if (pc_inc_2)
+            pc_value <= pc_value + 16'h0002;  // Increment by 2 for 16-bit values
         else if (pc_inc)
             pc_value <= pc_value + 16'h0001;
     end
@@ -272,12 +279,14 @@ module neander_datapath (
     input  logic       mem_read, // Used for RDM load logic
     input  logic       mem_write,
     input  logic       pc_inc,
+    input  logic       pc_inc_2,  // Increment PC by 2 (for 16-bit immediate fetch)
     input  logic       pc_load,
     input  logic       ac_load,
     input  logic       ri_load,
     input  logic       rem_load,
     input  logic       rdm_load,     // Load RDM low byte (for 16-bit address fetch)
     input  logic       rdm_load_hi,  // Load RDM high byte (for 16-bit address fetch)
+    input  logic       rdm_load_full, // Load full 16-bit RDM (for 16-bit memory operations)
     input  logic       nz_load,
     input  logic       c_load,   // Carry flag load (for CMP and arithmetic ops)
     input  logic [1:0] addr_sel,  // 00=RDM, 01=PC, 10=SP
@@ -423,7 +432,7 @@ module neander_datapath (
 
     pc_reg u_pc (
         .clk(clk), .reset(reset),
-        .pc_inc(pc_inc), .pc_load(pc_load),
+        .pc_inc(pc_inc), .pc_inc_2(pc_inc_2), .pc_load(pc_load),
         .data_in(rdm), .pc_value(pc)
     );
 
@@ -501,9 +510,11 @@ module neander_datapath (
         .clk(clk), .reset(reset),
         .load_lo(rdm_load & mem_read),      // Load low byte when rdm_load & mem_read
         .load_hi(rdm_load_hi & mem_read),   // Load high byte when rdm_load_hi & mem_read
+        .load_full(rdm_load_full & mem_read), // Load full 16-bit from memory (for 16-bit operations)
         .load_lo_alt(rdm_lo_from_temp),     // Load full 16-bit from swap_temp (indirect addressing)
         .rdm_inc(rdm_inc),                  // Increment RDM by 1 (indirect addressing)
         .data_in(mem_data_in[7:0]),         // Use low byte for address byte loading
+        .data_full(mem_data_in),            // Full 16-bit from memory
         .alt_data(swap_temp),               // Alternate source: swap_temp (16-bit)
         .value(rdm)
     );
