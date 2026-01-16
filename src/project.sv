@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Neander-X CPU for TinyTapeout with SPI Memory Interface
- * 8-bit educational processor with 64KB address space via SPI SRAM
+ * 16-bit educational processor with 64KB address space via SPI SRAM
  */
 
 `default_nettype none
@@ -41,11 +41,11 @@ module tt_um_cpu_leonardoaraujosantos (
   wire reset = ~rst_n;
 
   // ============================================================================
-  // CPU <-> SPI Controller Interface
+  // CPU <-> SPI Controller Interface (16-bit data)
   // ============================================================================
   wire [15:0] cpu_mem_addr;       // 16-bit addressing (64KB space)
-  wire [7:0]  cpu_mem_data_out;
-  wire [7:0]  cpu_mem_data_in;
+  wire [15:0] cpu_mem_data_out;   // 16-bit data
+  wire [15:0] cpu_mem_data_in;    // 16-bit data
   wire        cpu_mem_write;
   wire        cpu_mem_read;
   wire        cpu_mem_req;
@@ -72,14 +72,14 @@ module tt_um_cpu_leonardoaraujosantos (
   assign io_status = 8'b0;  // Status register (unused for now)
 
   // ============================================================================
-  // Debug signals - 16-bit PC, SP, FP for 64KB addressing
+  // Debug signals - 16-bit data width
   // ============================================================================
   wire [15:0] dbg_pc;
-  wire [7:0]  dbg_ac;
+  wire [15:0] dbg_ac;   // 16-bit AC
   wire [7:0]  dbg_ri;
   wire [15:0] dbg_sp;
-  wire [7:0]  dbg_x;
-  wire [7:0]  dbg_y;
+  wire [15:0] dbg_x;    // 16-bit X
+  wire [15:0] dbg_y;    // 16-bit Y
   wire [15:0] dbg_fp;
 
   // ============================================================================
@@ -157,6 +157,6 @@ module tt_um_cpu_leonardoaraujosantos (
   assign uio_out = dbg_pc[7:0];          // Debug: PC low byte (for 16-bit PC)
 
   // List all unused inputs to prevent warnings
-  wire _unused = &{ena, io_out_internal, dbg_ac[7:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_pc[15:8], 1'b0};
+  wire _unused = &{ena, io_out_internal, dbg_ac[15:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_pc[15:8], 1'b0};
 
 endmodule

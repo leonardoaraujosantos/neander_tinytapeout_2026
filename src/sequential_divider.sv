@@ -1,8 +1,8 @@
 // ============================================================================
-// sequential_divider.sv — Sequential 8-bit Divider for NEANDER-X CPU
+// sequential_divider.sv — Sequential 16-bit Divider for NEANDER-X CPU
 // ============================================================================
-// Implements restoring division algorithm for 8-bit unsigned division.
-// Takes 8 clock cycles to complete a division operation.
+// Implements restoring division algorithm for 16-bit unsigned division.
+// Takes 16 clock cycles to complete a division operation.
 //
 // Operation:
 //   dividend / divisor = quotient, remainder
@@ -13,29 +13,29 @@
 //   - done: Pulses high for 1 cycle when result is ready
 //   - div_by_zero: High if divisor is 0 (sets error flag)
 //
-// Area savings vs combinational: ~300-400 gates saved
-// Trade-off: 8 cycles vs 1 cycle execution time
+// Area savings vs combinational: ~800-1000 gates saved
+// Trade-off: 16 cycles vs 1 cycle execution time
 // ============================================================================
 
 module sequential_divider (
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       start,        // Start division (pulse)
-    input  logic [7:0] dividend,     // Dividend (numerator)
-    input  logic [7:0] divisor,      // Divisor (denominator)
-    output logic [7:0] quotient,     // Result: dividend / divisor
-    output logic [7:0] remainder,    // Result: dividend % divisor
-    output logic       busy,         // Division in progress
-    output logic       done,         // Result ready (pulse)
-    output logic       div_by_zero   // Division by zero error
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        start,        // Start division (pulse)
+    input  logic [15:0] dividend,     // Dividend (numerator)
+    input  logic [15:0] divisor,      // Divisor (denominator)
+    output logic [15:0] quotient,     // Result: dividend / divisor
+    output logic [15:0] remainder,    // Result: dividend % divisor
+    output logic        busy,         // Division in progress
+    output logic        done,         // Result ready (pulse)
+    output logic        div_by_zero   // Division by zero error
 );
 
     // Internal registers for restoring division
-    logic [7:0] A;           // Accumulator (becomes remainder)
-    logic [7:0] Q;           // Quotient register
-    logic [7:0] M;           // Divisor register
-    logic [3:0] count;       // Iteration counter (0-7 for 8 bits)
-    logic [8:0] diff;        // 9-bit for subtraction with borrow detection
+    logic [15:0] A;          // Accumulator (becomes remainder)
+    logic [15:0] Q;          // Quotient register
+    logic [15:0] M;          // Divisor register
+    logic [4:0]  count;      // Iteration counter (0-15 for 16 bits)
+    logic [16:0] diff;       // 17-bit for subtraction with borrow detection
 
     // State machine
     typedef enum logic [1:0] {
@@ -47,7 +47,7 @@ module sequential_divider (
     state_t state, next_state;
 
     // Division by zero detection
-    assign div_by_zero = (state == FINISH) && (M == 8'h00);
+    assign div_by_zero = (state == FINISH) && (M == 16'h0000);
 
     // Output assignments
     assign quotient = Q;
@@ -72,7 +72,7 @@ module sequential_divider (
                     next_state = DIVIDE;
             end
             DIVIDE: begin
-                if (count == 4'd7)
+                if (count == 5'd15)
                     next_state = FINISH;
             end
             FINISH: begin
@@ -91,19 +91,19 @@ module sequential_divider (
 
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            A <= 8'h00;
-            Q <= 8'h00;
-            M <= 8'h00;
-            count <= 4'h0;
+            A <= 16'h0000;
+            Q <= 16'h0000;
+            M <= 16'h0000;
+            count <= 5'h0;
         end else begin
             case (state)
                 IDLE: begin
                     if (start) begin
                         // Initialize registers
-                        A <= 8'h00;
+                        A <= 16'h0000;
                         Q <= dividend;
                         M <= divisor;
-                        count <= 4'h0;
+                        count <= 5'h0;
                     end
                 end
 
@@ -115,35 +115,35 @@ module sequential_divider (
                     //         If A < 0 (borrow), restore A and set Q[0]=0
 
                     // Calculate: shift left then subtract
-                    diff = {A[6:0], Q[7]} - {1'b0, M};
+                    diff = {A[14:0], Q[15]} - {1'b0, M};
 
-                    if (diff[8] == 1'b0) begin
+                    if (diff[16] == 1'b0) begin
                         // No borrow: A >= M, keep subtraction result
-                        A <= diff[7:0];
-                        Q <= {Q[6:0], 1'b1};  // Shift Q left, set LSB = 1
+                        A <= diff[15:0];
+                        Q <= {Q[14:0], 1'b1};  // Shift Q left, set LSB = 1
                     end else begin
                         // Borrow: A < M, restore (don't use subtraction result)
-                        A <= {A[6:0], Q[7]};  // Just shift, keep original value
-                        Q <= {Q[6:0], 1'b0};  // Shift Q left, set LSB = 0
+                        A <= {A[14:0], Q[15]};  // Just shift, keep original value
+                        Q <= {Q[14:0], 1'b0};   // Shift Q left, set LSB = 0
                     end
 
-                    count <= count + 4'h1;
+                    count <= count + 5'h1;
                 end
 
                 FINISH: begin
                     // Handle division by zero
-                    if (M == 8'h00) begin
-                        Q <= 8'hFF;       // Return max value for quotient
+                    if (M == 16'h0000) begin
+                        Q <= 16'hFFFF;    // Return max value for quotient
                         A <= dividend;    // Preserve dividend as remainder
                     end
                     // Otherwise Q and A already contain correct results
                 end
 
                 default: begin
-                    A <= 8'h00;
-                    Q <= 8'h00;
-                    M <= 8'h00;
-                    count <= 4'h0;
+                    A <= 16'h0000;
+                    Q <= 16'h0000;
+                    M <= 16'h0000;
+                    count <= 5'h0;
                 end
             endcase
         end

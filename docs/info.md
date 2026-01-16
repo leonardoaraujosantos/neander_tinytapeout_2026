@@ -9,14 +9,14 @@ You can also include images in this folder and reference them in the markdown. E
 
 ## How it works
 
-This project implements the Neander-X CPU, an 8-bit educational processor compatible with UFRGS's Neander-X architecture. It features an accumulator-based design with **16-bit addressing for a full 64KB address space**.
+This project implements the Neander-X CPU, a **16-bit educational processor** compatible with UFRGS's Neander-X architecture. It features an accumulator-based design with **16-bit data width and 16-bit addressing for a full 64KB address space**.
 
 **Core Architecture:**
-- 8-bit Accumulator (AC) for arithmetic/logic operations
+- **16-bit Accumulator (AC)** for arithmetic/logic operations
 - **16-bit Program Counter (PC)** - addresses full 64KB range
 - **16-bit Stack Pointer (SP)** - initialized to 0x00FF, grows downward
 - **16-bit Frame Pointer (FP)** - for local variable access in functions
-- 8-bit X and Y index registers for array/pointer operations
+- **16-bit X and Y index registers** for array/pointer operations
 - Condition flags: N (negative), Z (zero), C (carry)
 - **SPI memory interface (64KB address space via external SPI SRAM)**
 
@@ -71,22 +71,25 @@ Memory-addressing instructions use 3 bytes: `[opcode] [addr_lo] [addr_hi]` (litt
    - VSS (pin 4) → GND
    - HOLD (pin 7) → 3.3V
 
-2. **Pre-load a program** into the SPI SRAM starting at address 0x0000. Example program to add two numbers (16-bit addressing):
+2. **Pre-load a program** into the SPI SRAM starting at address 0x0000. Example program to add two numbers (16-bit data and addressing):
    ```
-   0x0000: 0xE0  ; LDI 5 (load immediate)
-   0x0001: 0x05  ; value = 5
-   0x0002: 0x30  ; ADD addr (3-byte instruction)
-   0x0003: 0x10  ; addr_lo = 0x10
-   0x0004: 0x00  ; addr_hi = 0x00 (address = 0x0010)
-   0x0005: 0xD0  ; OUT port
-   0x0006: 0x00  ; port 0
-   0x0007: 0xF0  ; HLT
+   0x0000: 0xE0  ; LDI 5 (load immediate 16-bit)
+   0x0001: 0x05  ; imm_lo = 5
+   0x0002: 0x00  ; imm_hi = 0 (value = 0x0005)
+   0x0003: 0x30  ; ADD addr (3-byte instruction)
+   0x0004: 0x12  ; addr_lo = 0x12
+   0x0005: 0x00  ; addr_hi = 0x00 (address = 0x0012)
+   0x0006: 0xD0  ; OUT port
+   0x0007: 0x00  ; port 0
+   0x0008: 0xF0  ; HLT
    ...
-   0x0010: 0x03  ; second operand = 3
+   0x0012: 0x03  ; second operand (16-bit): lo = 3
+   0x0013: 0x00  ; hi = 0 (value = 0x0003)
    ```
    Result: AC = 5 + 3 = 8, output to I/O port
 
-   **Note:** Memory operations now use 3 bytes: `[opcode] [addr_lo] [addr_hi]`
+   **Note:** Memory operations use 3 bytes: `[opcode] [addr_lo] [addr_hi]`
+   **Note:** LDI uses 3 bytes: `[opcode] [imm_lo] [imm_hi]` (16-bit immediate)
 
 3. **Apply reset** (rst_n low, then high) to start execution from address 0x00.
 

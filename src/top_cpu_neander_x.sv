@@ -1,38 +1,38 @@
 // ============================================================================
-// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (LCC + X/Y/FP Register + Carry Flag)
+// top_cpu_neander_x.sv — CPU TOP for NEANDER-X (16-bit Data Width)
 // ============================================================================
 
 module cpu_top (
     input  logic        clk,
     input  logic        reset,
 
-    // Interface com RAM (SPI memory controller handshaking) - 16-bit addressing
+    // Interface with RAM (SPI memory controller handshaking) - 16-bit addressing, 16-bit data
     output logic [15:0] mem_addr,
-    output logic [7:0]  mem_data_out,
-    input  logic [7:0]  mem_data_in,
+    output logic [15:0] mem_data_out,
+    input  logic [15:0] mem_data_in,
     output logic        mem_write,
     output logic        mem_read,
     output logic        mem_req,       // Memory access request (to SPI controller)
     input  logic        mem_ready,     // Memory access complete (from SPI controller)
 
-    // Interface com I/O
+    // Interface with I/O (remains 8-bit for peripheral compatibility)
     input  logic [7:0] io_in,
     input  logic [7:0] io_status,
     output logic [7:0] io_out,
     output logic       io_write,
 
-    // Debug - 16-bit PC, SP, FP for 64KB addressing
+    // Debug - 16-bit registers
     output logic [15:0] dbg_pc,
-    output logic [7:0]  dbg_ac,
+    output logic [15:0] dbg_ac,    // 16-bit AC
     output logic [7:0]  dbg_ri,
     output logic [15:0] dbg_sp,
-    output logic [7:0]  dbg_x,     // X register debug output
-    output logic [7:0]  dbg_y,     // Y register debug output
-    output logic [15:0] dbg_fp     // FP register debug output
+    output logic [15:0] dbg_x,     // 16-bit X register debug output
+    output logic [15:0] dbg_y,     // 16-bit Y register debug output
+    output logic [15:0] dbg_fp     // 16-bit FP register debug output
 );
 
-    logic       pc_inc, pc_load;
-    logic       ac_load, ri_load, rem_load, rdm_load, rdm_load_hi, nz_load;
+    logic       pc_inc, pc_inc_2, pc_load;  // pc_inc_2 for 16-bit immediate fetch
+    logic       ac_load, ri_load, rem_load, rdm_load, rdm_load_hi, rdm_load_full, nz_load;
     logic       c_load;          // Carry flag load (LCC extension)
     logic [1:0] addr_sel;
     logic [3:0] alu_op;          // Extended to 4 bits for NEG
@@ -89,12 +89,14 @@ module cpu_top (
         .mem_read(mem_read),
         .mem_write(mem_write),
         .pc_inc(pc_inc),
+        .pc_inc_2(pc_inc_2),
         .pc_load(pc_load),
         .ac_load(ac_load),
         .ri_load(ri_load),
         .rem_load(rem_load),
         .rdm_load(rdm_load),
         .rdm_load_hi(rdm_load_hi),  // 16-bit address fetch high byte
+        .rdm_load_full(rdm_load_full), // Load full 16-bit RDM
         .nz_load(nz_load),
         .c_load(c_load),           // Carry flag load (LCC extension)
         .addr_sel(addr_sel),
@@ -176,12 +178,14 @@ module cpu_top (
         .mem_write(mem_write),
         .mem_req(mem_req),         // Memory access request (to SPI controller)
         .pc_inc(pc_inc),
+        .pc_inc_2(pc_inc_2),       // Increment PC by 2 (for 16-bit immediate fetch)
         .pc_load(pc_load),
         .ac_load(ac_load),
         .ri_load(ri_load),
         .rem_load(rem_load),
         .rdm_load(rdm_load),
         .rdm_load_hi(rdm_load_hi),  // 16-bit address fetch high byte
+        .rdm_load_full(rdm_load_full), // Load full 16-bit RDM
         .nz_load(nz_load),
         .c_load(c_load),           // Carry flag load (LCC extension)
         .addr_sel(addr_sel),

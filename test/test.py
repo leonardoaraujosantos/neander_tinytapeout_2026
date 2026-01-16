@@ -49,11 +49,15 @@ JUMP_OPCODES = {
     0x72,                    # CALL
 }
 
-# Opcodes that take an immediate value (stay 2 bytes - opcode + immediate)
-IMMEDIATE_OPCODES = {
-    0xE0,  # LDI
-    0x7C,  # LDXI
-    0x06,  # LDYI
+# Opcodes that take a 16-bit immediate value (3 bytes - opcode + imm_lo + imm_hi)
+IMMEDIATE_16BIT_OPCODES = {
+    0xE0,  # LDI (16-bit immediate)
+    0x7C,  # LDXI (16-bit immediate)
+    0x06,  # LDYI (16-bit immediate)
+}
+
+# Opcodes that take an 8-bit immediate/port (2 bytes - opcode + byte)
+IMMEDIATE_8BIT_OPCODES = {
     0xD0,  # OUT (port number)
     0xC0,  # IN (port number)
 }
@@ -95,8 +99,12 @@ def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
             # Memory address opcodes: expand from 2 bytes to 3 bytes
             old_pos += 2
             new_pos += 3
-        elif opcode in IMMEDIATE_OPCODES:
-            # Immediate opcodes: stay 2 bytes
+        elif opcode in IMMEDIATE_16BIT_OPCODES:
+            # 16-bit immediate opcodes: expand from 2 bytes to 3 bytes (8-bit imm -> 16-bit imm)
+            old_pos += 2
+            new_pos += 3
+        elif opcode in IMMEDIATE_8BIT_OPCODES:
+            # 8-bit immediate opcodes (IN/OUT): stay 2 bytes
             old_pos += 2
             new_pos += 2
         else:
@@ -144,8 +152,18 @@ def convert_program_to_16bit(program, data_area_start=DATA_AREA_START):
             converted.append((new_addr >> 8) & 0xFF)  # addr_hi
             old_pos += 2
 
-        elif opcode in IMMEDIATE_OPCODES:
-            # Immediate value - keep as 2 bytes
+        elif opcode in IMMEDIATE_16BIT_OPCODES:
+            # 16-bit immediate value - expand from 2 bytes to 3 bytes
+            # Old format: [opcode, imm8] -> New format: [opcode, imm_lo, imm_hi]
+            converted.append(opcode)
+            if old_pos + 1 < len(program):
+                imm_val = program[old_pos + 1]  # Original 8-bit immediate
+                converted.append(imm_val & 0xFF)         # imm_lo (same as original)
+                converted.append((imm_val >> 8) & 0xFF)  # imm_hi (zero for 8-bit values)
+            old_pos += 2
+
+        elif opcode in IMMEDIATE_8BIT_OPCODES:
+            # 8-bit immediate (IN/OUT port) - keep as 2 bytes
             converted.append(opcode)
             if old_pos + 1 < len(program):
                 converted.append(program[old_pos + 1])
@@ -172,6 +190,17 @@ class NeanderTB:
     def read_memory(self, addr):
         """Read a byte from SPI SRAM memory directly (for verification)"""
         return safe_int(self.dut.spi_ram.memory[addr].value)
+
+    def load_memory_16bit(self, addr, value):
+        """Load a 16-bit value into memory (little-endian)"""
+        self.load_memory(addr, value & 0xFF)           # Low byte
+        self.load_memory(addr + 1, (value >> 8) & 0xFF)  # High byte
+
+    def read_memory_16bit(self, addr):
+        """Read a 16-bit value from memory (little-endian)"""
+        lo = self.read_memory(addr)
+        hi = self.read_memory(addr + 1)
+        return (hi << 8) | lo
 
     def load_program(self, program, start_addr=0, convert_to_16bit=True):
         """Load a program into memory starting at given address.
@@ -419,14 +448,27 @@ async def test_neander_jz_not_taken(dut):
 
 @cocotb.test()
 async def test_neander_jn_taken(dut):
-    """Test JN instruction when negative flag is set."""
-    dut._log.info("Test: LDI 0x80, JN 0x10, then LDI 55, OUT, HLT")
+    """Test JN instruction when negative flag is set (16-bit: 0x8000 is negative)."""
+    dut._log.info("Test: LDI 0x8000, JN 0x12, then LDI 55, OUT, HLT")
 
     tb = NeanderTB(dut)
 
-    # Program: LDI 0x80 (negative), JN 0x10, HLT, ... (at 0x10) LDI 55, OUT, HLT
-    tb.load_program([0xE0, 0x80, 0x90, 0x10, 0xF0])  # LDI 0x80, JN 0x10, HLT
-    tb.load_program([0xE0, 0x37, 0xD0, 0x00, 0xF0], start_addr=0x10)  # LDI 55, OUT, HLT
+    # Program in 16-bit format (no conversion needed)
+    # LDI 0x8000 (negative in 16-bit), JN 0x12, HLT
+    program = [
+        0xE0, 0x00, 0x80,  # LDI 0x8000 (negative in 16-bit)
+        0x90, 0x12, 0x00,  # JN 0x0012
+        0xF0,              # HLT (if jump not taken)
+    ]
+    tb.load_program(program, convert_to_16bit=False)
+
+    # At 0x12: LDI 55, OUT, HLT
+    target = [
+        0xE0, 0x37, 0x00,  # LDI 55
+        0xD0, 0x00,        # OUT
+        0xF0,              # HLT
+    ]
+    tb.load_program(target, start_addr=0x12, convert_to_16bit=False)
 
     await tb.setup()
 
@@ -440,7 +482,7 @@ async def test_neander_jn_taken(dut):
             break
 
     assert io_detected, "No IO write detected - JN should have jumped"
-    dut._log.info("Test PASSED: JN (taken) works")
+    dut._log.info("Test PASSED: JN (taken) works with 16-bit negative value")
 
 
 @cocotb.test()
@@ -650,7 +692,7 @@ async def test_neander_call_ret(dut):
     await tb.setup()
 
     io_detected = False
-    for cycle in range(4000):
+    for cycle in range(8000):  # Increased for 16-bit SPI transfers
         await RisingEdge(dut.clk)
 
         if tb.get_io_write():
@@ -944,15 +986,26 @@ async def test_neander_jnz(dut):
 @cocotb.test()
 async def test_neander_jc(dut):
     """Test JC (jump on carry) instruction."""
-    dut._log.info("Test: LDI 0xFF, ADD [0x10] (carry), JC 0x20, then OUT, HLT")
+    dut._log.info("Test: LDI 0xFFFF, ADD [0x20] (carry), JC 0x30, then OUT, HLT")
 
     tb = NeanderTB(dut)
 
-    # Program: LDI 0xFF, ADD [0x10], JC 0x20, HLT
-    tb.load_program([0xE0, 0xFF, 0x30, 0x10, 0x81, 0x20, 0xF0])  # JC is 0x81
-    tb.load_memory(0x10, 0x02)  # 0xFF + 0x02 = 0x101 (carry)
-    # At 0x20: OUT, HLT
-    tb.load_program([0xD0, 0x00, 0xF0], start_addr=0x20)
+    # Program: LDI 0xFFFF, ADD [0x20], JC 0x30, HLT
+    # 16-bit format: 0xFFFF + 0x0002 = 0x10001 (carry in 16-bit)
+    program = [
+        0xE0, 0xFF, 0xFF,  # LDI 0xFFFF (max 16-bit value)
+        0x30, 0x20, 0x00,  # ADD [0x0020]
+        0x81, 0x30, 0x00,  # JC 0x0030
+        0xF0,              # HLT
+    ]
+    tb.load_program(program, convert_to_16bit=False)
+    tb.load_memory_16bit(0x20, 0x0002)  # 0xFFFF + 0x0002 = 0x10001 (carry)
+    # At 0x30: OUT, HLT
+    target = [
+        0xD0, 0x00,        # OUT
+        0xF0,              # HLT
+    ]
+    tb.load_program(target, start_addr=0x30, convert_to_16bit=False)
 
     await tb.setup()
 
@@ -1289,14 +1342,27 @@ async def test_flags_zero(dut):
 
 @cocotb.test()
 async def test_flags_negative(dut):
-    """Test negative flag is set correctly."""
-    dut._log.info("Test: LDI 0x80, JN target, then OUT")
+    """Test negative flag is set correctly (16-bit: need value >= 0x8000)."""
+    dut._log.info("Test: LDI 0x8000, JN target, then OUT")
 
     tb = NeanderTB(dut)
 
-    # Program that uses negative flag
-    tb.load_program([0xE0, 0x80, 0x90, 0x10, 0xF0])  # LDI 0x80, JN 0x10, HLT
-    tb.load_program([0xE0, 0x88, 0xD0, 0x00, 0xF0], start_addr=0x10)  # LDI 0x88, OUT, HLT
+    # Program that uses negative flag (16-bit format, no conversion needed)
+    # LDI 0x8000 (negative in 16-bit), JN 0x0012, HLT
+    # At 0x12: LDI 0x0088, OUT 0, HLT
+    program = [
+        0xE0, 0x00, 0x80,  # LDI 0x8000 (negative in 16-bit)
+        0x90, 0x12, 0x00,  # JN 0x0012
+        0xF0,              # HLT (if jump not taken)
+    ]
+    tb.load_program(program, convert_to_16bit=False)
+
+    target_program = [
+        0xE0, 0x88, 0x00,  # LDI 0x0088
+        0xD0, 0x00,        # OUT 0
+        0xF0,              # HLT
+    ]
+    tb.load_program(target_program, start_addr=0x12, convert_to_16bit=False)
 
     await tb.setup()
 
@@ -1307,8 +1373,8 @@ async def test_flags_negative(dut):
             io_detected = True
             break
 
-    assert io_detected, "N flag not set correctly"
-    dut._log.info("Test PASSED: Negative flag works")
+    assert io_detected, "N flag not set correctly for 16-bit negative value 0x8000"
+    dut._log.info("Test PASSED: Negative flag works with 16-bit values")
 
 
 @cocotb.test()
@@ -1675,7 +1741,7 @@ async def test_call_ret_simple(dut):
     await tb.setup()
 
     io_detected = False
-    for cycle in range(4000):
+    for cycle in range(8000):  # Increased for 16-bit SPI transfers
         await RisingEdge(dut.clk)
         if tb.get_io_write():
             io_detected = True
@@ -1700,7 +1766,7 @@ async def test_call_ret_with_parameter(dut):
     await tb.setup()
 
     io_detected = False
-    for cycle in range(4000):
+    for cycle in range(8000):  # Increased for 16-bit SPI transfers
         await RisingEdge(dut.clk)
         if tb.get_io_write():
             io_detected = True
@@ -1727,7 +1793,7 @@ async def test_nested_calls(dut):
     await tb.setup()
 
     io_detected = False
-    for cycle in range(6000):
+    for cycle in range(12000):  # Increased for 16-bit SPI transfers (nested calls)
         await RisingEdge(dut.clk)
         if tb.get_io_write():
             io_detected = True
@@ -1760,7 +1826,7 @@ async def test_call_ret_preserves_stack(dut):
     await tb.setup()
 
     io_detected = False
-    for cycle in range(5000):
+    for cycle in range(10000):  # Increased for 16-bit SPI transfers
         await RisingEdge(dut.clk)
         if tb.get_io_write():
             io_detected = True
@@ -1793,7 +1859,7 @@ async def test_multiple_calls_same_subroutine(dut):
     await tb.setup()
 
     io_detected = False
-    for cycle in range(8000):
+    for cycle in range(15000):  # Increased for 16-bit SPI transfers (3 calls)
         await RisingEdge(dut.clk)
         if tb.get_io_write():
             io_detected = True
@@ -2658,17 +2724,18 @@ async def test_neg_positive(dut):
 @cocotb.test()
 async def test_neg_negative(dut):
     """Test NEG on negative number."""
-    dut._log.info("Test: LDI 0xFB, NEG, OUT (5)")
+    dut._log.info("Test: LDI 0xFFFB (-5), NEG, OUT (5)")
 
     tb = NeanderTB(dut)
 
+    # Use 16-bit format directly: -5 in 16-bit is 0xFFFB
     program = [
-        0xE0, 0xFB,  # LDI 0xFB (-5)
-        0x01,        # NEG
-        0xD0, 0x00,  # OUT (should be 5)
-        0xF0,        # HLT
+        0xE0, 0xFB, 0xFF,  # LDI 0xFFFB (-5 in 16-bit)
+        0x01,              # NEG
+        0xD0, 0x00,        # OUT (should be 5)
+        0xF0,              # HLT
     ]
-    tb.load_program(program)
+    tb.load_program(program, convert_to_16bit=False)
 
     await tb.setup()
 
@@ -2997,7 +3064,7 @@ async def test_jc_not_taken(dut):
     await tb.setup()
 
     io_detected = False
-    for cycle in range(5000):
+    for cycle in range(10000):  # Increased for 16-bit SPI transfers
         await RisingEdge(dut.clk)
         if tb.get_io_write():
             io_detected = True
@@ -3042,22 +3109,23 @@ async def test_jnc_taken(dut):
 
 @cocotb.test()
 async def test_jnc_not_taken(dut):
-    """Test JNC when carry is set."""
-    dut._log.info("Test: LDI 0xFF, ADD 1, JNC (not taken)")
+    """Test JNC when carry is set (16-bit: 0xFFFF + 1 = overflow)."""
+    dut._log.info("Test: LDI 0xFFFF, ADD 1, JNC (not taken due to carry)")
 
     tb = NeanderTB(dut)
 
+    # 16-bit format: 0xFFFF + 0x0001 = 0x10000 (carry set, so JNC should NOT jump)
     program = [
-        0xE0, 0x01,  # LDI 1
-        0x10, 0x80,  # STA 0x80
-        0xE0, 0xFF,  # LDI 0xFF
-        0x30, 0x80,  # ADD [0x80] (overflow, C=1)
-        0x82, 0x14,  # JNC 0x14 (not taken)
-        0xE0, 0xDD,  # LDI 0xDD
-        0xD0, 0x00,  # OUT
-        0xF0,        # HLT
+        0xE0, 0x01, 0x00,  # LDI 0x0001
+        0x10, 0x80, 0x00,  # STA 0x0080
+        0xE0, 0xFF, 0xFF,  # LDI 0xFFFF
+        0x30, 0x80, 0x00,  # ADD [0x0080] (0xFFFF + 1 = overflow, C=1)
+        0x82, 0x20, 0x00,  # JNC 0x0020 (not taken because C=1)
+        0xE0, 0xDD, 0x00,  # LDI 0x00DD
+        0xD0, 0x00,        # OUT
+        0xF0,              # HLT
     ]
-    tb.load_program(program)
+    tb.load_program(program, convert_to_16bit=False)
 
     await tb.setup()
 
@@ -3729,18 +3797,19 @@ async def test_asr_positive_number(dut):
 
 @cocotb.test()
 async def test_asr_negative_number(dut):
-    """Test ASR on negative number: 0x80 >> 1 = 0xC0 (sign extended)."""
-    dut._log.info("Test: LDI 0x80, ASR, OUT")
+    """Test ASR on negative number: 0x8000 >> 1 = 0xC000 (sign extended)."""
+    dut._log.info("Test: LDI 0x8000, ASR, OUT")
 
     tb = NeanderTB(dut)
 
+    # Use 16-bit format: 0x8000 is negative in 16-bit
     program = [
-        0xE0, 0x80,  # LDI 0x80
-        0x61,        # ASR (preserves sign bit)
-        0xD0, 0x00,  # OUT
-        0xF0,        # HLT
+        0xE0, 0x00, 0x80,  # LDI 0x8000 (negative in 16-bit)
+        0x61,              # ASR (preserves sign bit)
+        0xD0, 0x00,        # OUT
+        0xF0,              # HLT
     ]
-    tb.load_program(program)
+    tb.load_program(program, convert_to_16bit=False)
 
     await tb.setup()
 

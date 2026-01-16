@@ -18,13 +18,15 @@ module spi_sram_model (
     logic [7:0] memory [0:65535];
 
     // Internal state
-    typedef enum logic [2:0] {
+    typedef enum logic [3:0] {
         IDLE,
         GET_CMD,
         GET_ADDR_HI,
         GET_ADDR_LO,
         READ_DATA,
-        WRITE_DATA
+        READ_DATA_HI,
+        WRITE_DATA,
+        WRITE_DATA_HI
     } state_t;
 
     state_t state;
@@ -99,13 +101,25 @@ module spi_sram_model (
                         end
                     end
                     WRITE_DATA: begin
-                        // Write data to memory
+                        // Write byte 0 to memory
                         memory[address] <= {shift_in[6:0], spi_mosi};
-                        // Stay in WRITE_DATA for sequential writes (not implemented)
+                        // Move to WRITE_DATA_HI for second byte
+                        state <= WRITE_DATA_HI;
+                    end
+                    WRITE_DATA_HI: begin
+                        // Write byte 1 to memory (address + 1)
+                        memory[address + 16'd1] <= {shift_in[6:0], spi_mosi};
                         state <= IDLE;
                     end
                     READ_DATA: begin
-                        // For sequential reads (not implemented - just one byte)
+                        // First byte done, prepare second byte
+                        address <= address + 16'd1;
+                        shift_out <= memory[address + 16'd1];
+                        read_bit_cnt <= 3'd0;
+                        state <= READ_DATA_HI;
+                    end
+                    READ_DATA_HI: begin
+                        // Second byte done, go to idle
                         state <= IDLE;
                     end
                     default: ;
@@ -115,9 +129,9 @@ module spi_sram_model (
     end
 
     // Shift out on falling edge for read
-    // Skip the first negedge after entering READ_DATA - data must be stable for first sample
+    // Skip the first negedge after entering READ_DATA/READ_DATA_HI - data must be stable for first sample
     always @(negedge spi_sclk) begin
-        if (!spi_cs_n && state == READ_DATA) begin
+        if (!spi_cs_n && (state == READ_DATA || state == READ_DATA_HI)) begin
             if (read_bit_cnt > 0) begin
                 // Only shift after the first bit has been sampled
                 shift_out <= {shift_out[6:0], 1'b0};
