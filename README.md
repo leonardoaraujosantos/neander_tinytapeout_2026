@@ -72,10 +72,10 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 
 | Opcode | Mnemonic | Operation | Flags |
 |--------|----------|-----------|-------|
-| 0x70 | PUSH | SP--; MEM[SP] <- AC | - |
-| 0x71 | POP | AC <- MEM[SP]; SP++ | N, Z |
-| 0x72 | CALL addr | SP--; MEM[SP] <- PC; PC <- addr | - |
-| 0x73 | RET | PC <- MEM[SP]; SP++ | - |
+| 0x70 | PUSH | SP -= 2; MEM[SP] <- AC (16-bit) | - |
+| 0x71 | POP | AC <- MEM[SP] (16-bit); SP += 2 | N, Z |
+| 0x72 | CALL addr | SP -= 2; MEM[SP] <- PC (16-bit); PC <- addr | - |
+| 0x73 | RET | PC <- MEM[SP] (16-bit); SP += 2 | - |
 
 ### LCC Extension (C Compiler Support)
 
@@ -211,8 +211,8 @@ The Frame Pointer (FP) register enables efficient access to local variables and 
 |--------|----------|-----------|-------|
 | 0x0A | TSF | FP <- SP (Transfer SP to FP) | - |
 | 0x0B | TFS | SP <- FP (Transfer FP to SP) | - |
-| 0x0C | PUSH_FP | SP--; MEM[SP] <- FP | - |
-| 0x0D | POP_FP | FP <- MEM[SP]; SP++ | - |
+| 0x0C | PUSH_FP | SP -= 2; MEM[SP] <- FP (16-bit) | - |
+| 0x0D | POP_FP | FP <- MEM[SP] (16-bit); SP += 2 | - |
 
 ### Indexed Addressing Modes (FP)
 
@@ -224,18 +224,24 @@ The Frame Pointer (FP) register enables efficient access to local variables and 
 **Typical function prologue/epilogue pattern:**
 
 ```assembly
-; Function prologue
-func:   PUSH_FP         ; Save caller's FP
+; Function prologue (16-bit stack frame)
+func:   PUSH_FP         ; Save caller's FP (SP -= 2)
         TSF             ; FP = SP (set up new frame)
 
-        ; Access local variables via FP-indexed addressing
-        LDA 0x01,FP     ; Load first local (at FP+1)
-        STA 0x02,FP     ; Store to second local (at FP+2)
+        ; Access parameters passed before CALL (positive offsets)
+        ; Stack layout: [old_FP][ret_addr][param1][param2]...
+        ;               FP      FP+2      FP+4    FP+6
+        LDA 0x04,FP     ; Load first parameter (at FP+4)
+        LDA 0x06,FP     ; Load second parameter (at FP+6)
+
+        ; Allocate local variables with PUSH (negative offsets)
+        PUSH            ; First local at FP-2
+        PUSH            ; Second local at FP-4
 
 ; Function epilogue
         TFS             ; SP = FP (deallocate locals)
-        POP_FP          ; Restore caller's FP
-        RET             ; Return to caller
+        POP_FP          ; Restore caller's FP (SP += 2)
+        RET             ; Return to caller (SP += 2)
 ```
 
 ### Hardware Multiplication and Division
@@ -317,7 +323,7 @@ With 16-bit addressing, instructions that reference memory use a **3-byte format
 | Instruction Type | Format | Bytes | Example |
 |-----------------|--------|-------|---------|
 | Memory operations | `[opcode] [addr_lo] [addr_hi]` | 3 | `LDA 0x1234` → `0x20 0x34 0x12` |
-| Immediate | `[opcode] [imm]` | 2 | `LDI 0x42` → `0xE0 0x42` |
+| 16-bit Immediate | `[opcode] [imm_lo] [imm_hi]` | 3 | `LDI 0x1234` → `0xE0 0x34 0x12` |
 | Single-byte | `[opcode]` | 1 | `NOT` → `0x60` |
 | I/O operations | `[opcode] [port]` | 2 | `OUT 0` → `0xD0 0x00` |
 
@@ -328,8 +334,10 @@ With 16-bit addressing, instructions that reference memory use a **3-byte format
 - All jumps: JMP, JN, JZ, JNZ, JC, JNC, JLE, JGT, JGE, JBE, JA
 - Subroutine call: CALL
 
-**Instructions with 2-byte format (immediate or port):**
+**Instructions with 3-byte format (16-bit immediate):**
 - Immediate loads: LDI, LDXI, LDYI
+
+**Instructions with 2-byte format (8-bit port):**
 - I/O operations: IN, OUT
 
 **Instructions with 1-byte format:**
@@ -348,7 +356,7 @@ graph TB
     subgraph ASIC["TinyTapeout ASIC (Synthesized)"]
         subgraph CPU["Neander-X CPU"]
             ALU["ALU<br/>+, -, *, /, AND, OR, XOR"]
-            DP["Datapath<br/>PC(16), SP(16), FP(16)<br/>AC(8), X(8), Y(8)"]
+            DP["Datapath<br/>PC(16), SP(16), FP(16)<br/>AC(16), X(16), Y(16)"]
             CU["Control Unit<br/>FSM (~90 states)"]
         end
         SPI["SPI Memory Controller<br/>(parallel ↔ serial)"]
@@ -360,7 +368,7 @@ graph TB
         IO_OUT["LEDs/Display<br/>(via latch)"]
     end
 
-    CPU <-->|"parallel bus<br/>addr[15:0], data[7:0]<br/>req, ready"| SPI
+    CPU <-->|"parallel bus<br/>addr[15:0], data[15:0]<br/>req, ready"| SPI
     SPI <-->|"4-wire SPI<br/>CS, SCLK, MOSI, MISO"| SRAM
     IO_IN -->|"ui_in[7:1]"| CPU
     CPU -->|"IO_WRITE strobe"| IO_OUT
@@ -598,6 +606,7 @@ The SPI interface saves 11 pins while providing **2048x more memory** (64KB vs 3
 - [Project Info (TinyTapeout)](docs/info.md) - Pin interface and testing guide
 - [NEANDER CPU Guide](docs/NEANDER_cpu.md) - Complete architecture and implementation details
 - [Stack Extension](docs/NEANDER_X_STACK.md) - PUSH/POP/CALL/RET documentation
+- [16-bit Porting Guide](docs/PORTING_TO_16_BIT.md) - Details on 16-bit data width conversion
 - [SPI SRAM Memory](docs/SPI_SRAM_MEMORY.md) - External SPI SRAM protocol and compatible chips
 - [SPI Memory Controller](docs/SPI_MEM_CONTROLLER.md) - SPI controller implementation details
 - [LCC Compiler Backend](docs/LCC_NEANDER_BACKEND.md) - Guide for targeting LCC C compiler to NEANDER-X
