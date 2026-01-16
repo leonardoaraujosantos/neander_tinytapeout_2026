@@ -29,13 +29,18 @@ build-lcc:
         git clone {{LCC_REPO}} {{LCC_DIR}}
     fi
     cd {{LCC_DIR}}
-    echo "Building lburg..."
-    cd lburg && make && cd ..
-    echo "Generating Neander-X backend..."
-    ./lburg/lburg src/neanderx.md > src/neanderx.c
-    echo "Building LCC..."
-    make
-    echo "LCC build complete: {{LCC_DIR}}/build/rcc"
+    echo "Creating build directory..."
+    mkdir -p build
+    echo "Building lburg first..."
+    make BUILDDIR=build lburg
+    echo "Generating Neander-X backend from grammar..."
+    ./build/lburg src/neanderx.md > build/neanderx.c
+    echo "Building LCC with Neander-X target..."
+    make BUILDDIR=build TARGET=neanderx HOSTFILE=etc/neanderx.c rcc
+    echo ""
+    echo "LCC build complete!"
+    echo "  Compiler: {{LCC_DIR}}/build/rcc"
+    echo "  Usage: ./build/rcc -target=neanderx input.c > output.s"
 
 # Update LCC from git repository
 update-lcc:
@@ -48,8 +53,8 @@ update-lcc:
     cd {{LCC_DIR}}
     git pull
     echo "Rebuilding LCC..."
-    ./lburg/lburg src/neanderx.md > src/neanderx.c
-    make
+    ./build/lburg src/neanderx.md > build/neanderx.c
+    make BUILDDIR=build TARGET=neanderx HOSTFILE=etc/neanderx.c rcc
     echo "LCC update complete"
 
 # Compile a single C file to assembly
@@ -63,7 +68,7 @@ compile-one FILE:
     INPUT="{{FILE}}"
     OUTPUT="${INPUT%.c}.s"
     echo "Compiling $INPUT -> $OUTPUT"
-    {{LCC_DIR}}/build/rcc -target=neanderx/none "$INPUT" > "$OUTPUT"
+    {{LCC_DIR}}/build/rcc -target=neanderx "$INPUT" > "$OUTPUT"
 
 # Compile all C samples to assembly
 compile:
@@ -77,7 +82,7 @@ compile:
     for cfile in {{SAMPLES_DIR}}/*.c; do
         sfile="${cfile%.c}.s"
         echo "  $cfile -> $sfile"
-        {{LCC_DIR}}/build/rcc -target=neanderx/none "$cfile" > "$sfile"
+        {{LCC_DIR}}/build/rcc -target=neanderx "$cfile" > "$sfile"
     done
     echo "Compilation complete"
 
@@ -112,8 +117,11 @@ assemble:
 generate-python:
     python3 scripts/generate_lcc_programs.py
 
+# Run all cocotb tests (both CPU and LCC)
+test: test-cpu test-lcc
+
 # Run cocotb tests for LCC programs
-test:
+test-lcc:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Running LCC program tests..."
@@ -121,7 +129,16 @@ test:
     make clean
     make
 
-# Run a specific test
+# Run cocotb tests for CPU (basic tests)
+test-cpu:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Running CPU tests..."
+    cd cocotb_tests
+    make clean
+    make
+
+# Run a specific LCC test
 test-one NAME:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -186,7 +203,7 @@ check-lcc:
     #!/usr/bin/env bash
     if [ -f "{{LCC_DIR}}/build/rcc" ]; then
         echo "LCC installed at: {{LCC_DIR}}/build/rcc"
-        {{LCC_DIR}}/build/rcc -target=neanderx/none -version 2>&1 || true
+        {{LCC_DIR}}/build/rcc -target=neanderx -version 2>&1 || true
     else
         echo "LCC not found. Run 'just build-lcc' to install."
     fi
