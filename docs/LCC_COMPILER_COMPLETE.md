@@ -46,8 +46,11 @@ O LCC (Little C Compiler) e um compilador C retargetavel desenvolvido por Chris 
 | sparc/solaris | SPARC, Solaris 2.3 |
 | x86/win32 | x86, Windows NT/95/98 |
 | x86/linux | x86, Linux |
+| **neanderx** | **NEANDER-X 16-bit (educacional)** |
 | symbolic | Saida textual da IR (debug) |
 | null | Sem saida (testes) |
+
+> **Nota**: Para detalhes especificos sobre o backend NEANDER-X 16-bit, consulte [LCC_NEANDER_BACKEND.md](LCC_NEANDER_BACKEND.md).
 
 ---
 
@@ -2236,6 +2239,8 @@ Use `src/ops.h` como referencia.
 3. Documentacao online: https://drh.github.io/lcc/
 
 4. Interface 4.x: https://drh.github.io/lcc/documents/interface4.pdf
+
+5. **Backend NEANDER-X 16-bit**: [LCC_NEANDER_BACKEND.md](LCC_NEANDER_BACKEND.md) - Documentacao especifica para o processador educacional NEANDER-X
 
 ---
 
