@@ -172,8 +172,8 @@ module neander_control (
         S_IN_1,  S_IN_2,  S_IN_2B,  S_IN_2C,  S_IN_3,
         // OUT: now 5 states for 16-bit port address
         S_OUT_1, S_OUT_2, S_OUT_2B, S_OUT_2C, S_OUT_3,
-        S_PUSH_1, S_PUSH_2, S_PUSH_3,  // Stack PUSH (8-bit data)
-        S_POP_1,  S_POP_2,  S_POP_3,   // Stack POP (8-bit data)
+        S_PUSH_1, S_PUSH_1B, S_PUSH_2, S_PUSH_3,  // Stack PUSH (16-bit data, SP -= 2)
+        S_POP_1,  S_POP_2,  S_POP_3, S_POP_4,   // Stack POP (16-bit data, SP += 2)
         // CALL: extended for 16-bit target address and 16-bit return address push
         S_CALL_1, S_CALL_2, S_CALL_2B, S_CALL_2C, S_CALL_3, S_CALL_4, S_CALL_5, S_CALL_6, S_CALL_7,
         // RET: extended for 16-bit return address pop
@@ -881,9 +881,14 @@ module neander_control (
             end
 
             // --- PUSH (0x70) ---
-            // Push AC onto stack: decrement SP, load SP to REM, write AC to [SP]
+            // Push AC onto stack: decrement SP by 2, load SP to REM, write AC to [SP]
+            // 16-bit data requires SP -= 2 to avoid overlap with previous stack entries
             S_PUSH_1: begin
-                sp_dec = 1;  // Decrement SP first (SP now points to new stack top)
+                sp_dec = 1;  // Decrement SP first (first of 2)
+                next_state = S_PUSH_1B;
+            end
+            S_PUSH_1B: begin
+                sp_dec = 1;  // Decrement SP (second of 2, now SP -= 2 total)
                 next_state = S_PUSH_2;
             end
             S_PUSH_2: begin
@@ -898,7 +903,8 @@ module neander_control (
             end
 
             // --- POP (0x71) ---
-            // Pop from stack to AC: read [SP] to AC, then increment SP
+            // Pop from stack to AC: read [SP] to AC, then increment SP by 2
+            // 16-bit data requires SP += 2 to properly advance past the 16-bit value
             S_POP_1: begin
                 addr_sel = 2'b10;  // SP -> REM
                 rem_load = 1;
@@ -913,12 +919,16 @@ module neander_control (
                 if (mem_ready) begin
                     ac_load = 1;       // Load data into AC
                     nz_load = 1;       // Update flags
-                    sp_inc = 1;        // Increment SP (point to next stack item)
-                    next_state = S_FETCH_1;
+                    sp_inc = 1;        // Increment SP (first of 2)
+                    next_state = S_POP_4;
                 end else begin
                     mem_req = 1;
                     next_state = S_POP_3;
                 end
+            end
+            S_POP_4: begin
+                sp_inc = 1;            // Increment SP (second of 2, now SP += 2 total)
+                next_state = S_FETCH_1;
             end
 
             // --- CALL (0x72 addr) --- 16-bit target address, 16-bit return address push
@@ -2409,11 +2419,14 @@ module neander_control (
                 next_state = S_FETCH_1;
             end
 
-            // --- PUSH_FP (0x0C) --- 8-bit push for backward compatibility
-            // Push FP low byte onto stack: MEM[--SP] = FP_LO
-            // For 16-bit FP save, use two manual PUSH operations
+            // --- PUSH_FP (0x0C) --- 16-bit push for frame pointer
+            // Push full 16-bit FP onto stack: SP -= 2, MEM[SP] = FP
             S_PUSH_FP_1: begin
-                sp_dec = 1;        // Decrement SP first
+                sp_dec = 1;        // Decrement SP first (first of 2)
+                next_state = S_PUSH_FP_4;
+            end
+            S_PUSH_FP_4: begin
+                sp_dec = 1;        // Decrement SP (second of 2, now SP -= 2 total)
                 next_state = S_PUSH_FP_2;
             end
             S_PUSH_FP_2: begin
@@ -2423,30 +2436,43 @@ module neander_control (
             end
             S_PUSH_FP_3: begin
                 mem_write = 1;
-                mem_data_sel_ext = 3'b100;  // FP_LO
+                mem_data_sel_ext = 3'b100;  // FP (full 16-bit)
                 if (mem_ready) begin next_state = S_FETCH_1; end
                 else begin mem_req = 1; next_state = S_PUSH_FP_3; end
             end
+            // Unused states for compatibility
+            S_PUSH_FP_5: begin next_state = S_FETCH_1; end
+            S_PUSH_FP_6: begin next_state = S_FETCH_1; end
 
-            // --- POP_FP (0x0D) --- 8-bit pop for backward compatibility
-            // Pop from stack to FP low byte: FP_LO = MEM[SP++], FP_HI = 0
-            // For 16-bit FP restore, use two manual POP operations
+            // --- POP_FP (0x0D) --- 16-bit pop for frame pointer
+            // Pop full 16-bit FP from stack: FP = MEM[SP], SP += 2
             S_POP_FP_1: begin
                 addr_sel = 2'b10;  // SP -> REM
                 rem_load = 1;
                 next_state = S_POP_FP_2;
             end
             S_POP_FP_2: begin
+                mem_read = 1; mem_req = 1;
+                next_state = S_POP_FP_3;
+            end
+            S_POP_FP_3: begin
                 mem_read = 1;
                 if (mem_ready) begin
-                    fp_load_lo = 1;    // Load FP low byte (high byte cleared)
-                    sp_inc = 1;        // Increment SP
-                    next_state = S_FETCH_1;
+                    fp_load_lo = 1;    // Load full 16-bit FP from memory
+                    sp_inc = 1;        // Increment SP (first of 2)
+                    next_state = S_POP_FP_4;
                 end else begin
                     mem_req = 1;
-                    next_state = S_POP_FP_2;
+                    next_state = S_POP_FP_3;
                 end
             end
+            S_POP_FP_4: begin
+                sp_inc = 1;            // Increment SP (second of 2, now SP += 2 total)
+                next_state = S_FETCH_1;
+            end
+            // Unused states for compatibility
+            S_POP_FP_5: begin next_state = S_FETCH_1; end
+            S_POP_FP_6: begin next_state = S_FETCH_1; end
 
             // ================================================================
             // INDEXED ADDRESSING MODES (FP)

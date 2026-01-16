@@ -1418,38 +1418,40 @@ async def test_push_pop_single(dut):
 
 @cocotb.test()
 async def test_push_pop_multiple(dut):
-    """Test multiple PUSH and POP operations without overlap"""
+    """Test multiple consecutive PUSH and POP operations (LIFO order)"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # IMPORTANT: PUSH decrements SP by 1 but writes 16 bits (2 bytes).
-    # Consecutive PUSHes overlap! Test PUSH/POP pairs instead.
-    # Each PUSH/POP cycle is independent, verifying LIFO behavior.
+    # With SP -= 2 for each PUSH, consecutive PUSHes don't overlap.
+    # Push 3 values, then pop them in LIFO order to verify stack integrity.
+    # Stack layout (SP starts at 0xFF):
+    #   After PUSH 0x11: SP = 0xFD, value at 0xFD-0xFE
+    #   After PUSH 0x22: SP = 0xFB, value at 0xFB-0xFC
+    #   After PUSH 0x33: SP = 0xF9, value at 0xF9-0xFA
+    # POP order: 0x33, 0x22, 0x11
     program = [
-        # First PUSH/POP cycle
+        # Push three values consecutively
         0xE0, 0x11, 0x00,  # LDI 0x0011
-        0x70,               # PUSH (0x11)
-        0x71,               # POP -> AC = 0x11
-        0x10, 0x80, 0x00,  # STA 0x0080 (save result)
-
-        # Second PUSH/POP cycle
+        0x70,               # PUSH (0x11) - SP = 0xFD
         0xE0, 0x22, 0x00,  # LDI 0x0022
-        0x70,               # PUSH (0x22)
-        0x71,               # POP -> AC = 0x22
-        0x10, 0x82, 0x00,  # STA 0x0082 (save result)
-
-        # Third PUSH/POP cycle - output this one
+        0x70,               # PUSH (0x22) - SP = 0xFB
         0xE0, 0x33, 0x00,  # LDI 0x0033
-        0x70,               # PUSH (0x33)
-        0x71,               # POP -> AC = 0x33
+        0x70,               # PUSH (0x33) - SP = 0xF9
 
-        # Output the popped value (0x33)
+        # Pop in LIFO order and verify each value
+        0x71,               # POP -> AC = 0x33 (last pushed, first popped)
+        0x10, 0x80, 0x00,  # STA 0x0080 (save first pop result)
+        0x71,               # POP -> AC = 0x22
+        0x10, 0x82, 0x00,  # STA 0x0082 (save second pop result)
+        0x71,               # POP -> AC = 0x11 (first pushed, last popped)
+
+        # Output the last popped value (0x11)
         0xD0, 0x00,        # OUT 0
         0xF0,               # HLT
     ]
-    expected = 0x33  # Third value pushed and immediately popped
+    expected = 0x11  # First value pushed, last popped (LIFO)
 
-    dut._log.info("Testing multiple PUSH/POP pairs")
+    dut._log.info("Testing multiple consecutive PUSH/POP operations (LIFO)")
 
     await tb.load_program(program, convert_to_16bit=False)
     await tb.reset()
@@ -1459,18 +1461,19 @@ async def test_push_pop_multiple(dut):
     dut._log.info(f"I/O output received: 0x{result:02X} (expected: 0x{expected:02X})")
     assert result == expected, f"Multiple PUSH/POP test failed. Expected 0x{expected:02X}, got 0x{result:02X}"
 
-    # Verify intermediate values stored in memory
+    # Verify intermediate values stored in memory (LIFO order)
+    # First POP gets 0x33 (last pushed), Second POP gets 0x22
     tb.dut.mem_read_addr.value = 0x0080
     await RisingEdge(tb.dut.clk)
     r1 = int(tb.dut.mem_read_data.value)
     tb.dut.mem_read_addr.value = 0x0082
     await RisingEdge(tb.dut.clk)
     r2 = int(tb.dut.mem_read_data.value)
-    dut._log.info(f"First cycle result (stored at 0x80): 0x{r1 & 0xFF:02X} (expected: 0x11)")
-    dut._log.info(f"Second cycle result (stored at 0x82): 0x{r2 & 0xFF:02X} (expected: 0x22)")
+    dut._log.info(f"First POP result (stored at 0x80): 0x{r1 & 0xFF:02X} (expected: 0x33)")
+    dut._log.info(f"Second POP result (stored at 0x82): 0x{r2 & 0xFF:02X} (expected: 0x22)")
 
-    assert (r1 & 0xFF) == 0x11, f"First cycle should be 0x11, got 0x{r1 & 0xFF:02X}"
-    assert (r2 & 0xFF) == 0x22, f"Second cycle should be 0x22, got 0x{r2 & 0xFF:02X}"
+    assert (r1 & 0xFF) == 0x33, f"First POP should be 0x33 (LIFO), got 0x{r1 & 0xFF:02X}"
+    assert (r2 & 0xFF) == 0x22, f"Second POP should be 0x22, got 0x{r2 & 0xFF:02X}"
 
     dut._log.info("Test PASSED!")
 
@@ -1757,41 +1760,51 @@ async def test_nested_calls(dut):
 
 @cocotb.test()
 async def test_call_ret_preserves_stack(dut):
-    """Test that CALL/RET properly manages stack with PUSH/POP"""
+    """Test that PUSH before CALL survives - value is preserved across CALL/RET"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
+    # With SP -= 2 for PUSH and CALL, PUSH before CALL no longer corrupts
+    # the return address. This test verifies:
+    # 1. PUSH saves value to stack
+    # 2. CALL pushes return address (doesn't overwrite pushed value)
+    # 3. RET pops return address correctly
+    # 4. POP retrieves the originally pushed value
+
     SUBROUTINE_ADDR = 0x20
 
-    # Main: push 0xAA, call subroutine, pop (should get 0xAA back)
-    # Subroutine: push 0xBB, pop (internal use), return
+    # Stack layout (SP starts at 0xFF):
+    #   After PUSH 0x5A: SP = 0xFD, value at 0xFD-0xFE
+    #   After CALL:      SP = 0xFB, return addr at 0xFB-0xFC
+    #   After RET:       SP = 0xFD, return addr consumed
+    #   After POP:       SP = 0xFF, AC = 0x5A
+
     program = [
-        # Main program
-        Op.LDI, 0xAA,               # 0x00: AC = 0xAA
-        Op.PUSH, 0x00,              # 0x02: Push 0xAA
-        Op.CALL, SUBROUTINE_ADDR,   # 0x04: Call subroutine
-        Op.POP, 0x00,               # 0x06: Pop (should be 0xAA)
-        Op.OUT, 0x00,               # 0x08: Output
-        Op.HLT, 0x00,               # 0x0A: Halt
+        # Main program (raw 16-bit format)
+        0xE0, 0x5A, 0x00,             # 0x00: LDI 0x5A
+        0x70,                          # 0x03: PUSH (save value, SP = 0xFD)
+        0x72, SUBROUTINE_ADDR, 0x00,  # 0x04: CALL subroutine (SP = 0xFB)
+        0x71,                          # 0x07: POP (restore value, SP = 0xFD, then 0xFF)
+        0xD0, 0x00,                   # 0x08: OUT (should output 0x5A)
+        0xF0,                          # 0x0A: HLT
     ]
 
     # Pad to subroutine address
     while len(program) < SUBROUTINE_ADDR:
         program.append(0x00)
 
-    # Subroutine: uses stack internally but cleans up
+    # Subroutine: modifies AC but doesn't touch the stack value
     program.extend([
-        Op.LDI, 0xBB,               # 0x20: AC = 0xBB
-        Op.PUSH, 0x00,              # 0x22: Push 0xBB
-        Op.POP, 0x00,               # 0x24: Pop (clean up)
-        Op.RET, 0x00,               # 0x26: Return
+        0xE0, 0xBB, 0x00,         # 0x20: LDI 0xBB (clobber AC)
+        0x10, 0x82, 0x00,         # 0x23: STA 0x0082 (use AC)
+        0x73,                     # 0x26: RET
     ])
 
-    expected = 0xAA  # The value we pushed before CALL
+    expected = 0x5A  # The value we pushed before CALL
 
-    dut._log.info("Testing CALL/RET with PUSH/POP (stack integrity)")
+    dut._log.info("Testing PUSH before CALL preserves value across CALL/RET")
 
-    await tb.load_program(program)
+    await tb.load_program(program, convert_to_16bit=False)
     await tb.reset()
 
     result = await tb.wait_for_io_write(max_cycles=30000)
@@ -1863,89 +1876,63 @@ async def test_multiple_calls_same_subroutine(dut):
 async def test_loop_with_function_call(dut):
     """
     Test a for-loop that calls a function f(x) = x + 5 multiple times.
-
-    This is a comprehensive test combining:
-    - Loop with counter and conditional jump
-    - CALL/RET to a subroutine
-    - Subroutine performs f(x) = x + 5
-
-    Program structure:
-        Main:
-            result = 0
-            counter = 4
-        loop:
-            result = add5(result)   ; CALL add5
-            counter = counter - 1
-            if counter != 0: goto loop
-            OUT result
-            HLT
-
-        add5:                       ; Subroutine: f(x) = x + 5
-            AC = AC + 5
-            RET
-
     Expected: 0 + 5 + 5 + 5 + 5 = 20
     """
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # Memory layout
-    SUBROUTINE_ADDR = 0x30  # add5 subroutine location
+    # Memory layout (use addresses above code)
     ADDR_RESULT = 0x80      # Running result
-    ADDR_COUNTER = 0x81     # Loop counter
-    ADDR_NEG_ONE = 0x82     # Constant -1 (0xFF) for decrement
-    ADDR_FIVE = 0x83        # Constant 5 for add5 function
+    ADDR_COUNTER = 0x82     # Loop counter (skip 2 bytes for 16-bit value)
+    ADDR_NEG_ONE = 0x84     # Constant -1 (0xFF) for decrement
+    ADDR_FIVE = 0x86        # Constant 5 for add5 function
 
+    # Raw 16-bit format program
     program = [
         # Initialize
-        Op.LDI, 0x00,               # 0x00: AC = 0
-        Op.STA, ADDR_RESULT,        # 0x02: result = 0
-        Op.LDI, 0x04,               # 0x04: AC = 4
-        Op.STA, ADDR_COUNTER,       # 0x06: counter = 4
+        0xE0, 0x00, 0x00,         # 0x00: LDI 0
+        0x10, 0x80, 0x00,         # 0x03: STA 0x0080 (result = 0)
+        0xE0, 0x04, 0x00,         # 0x06: LDI 4
+        0x10, 0x82, 0x00,         # 0x09: STA 0x0082 (counter = 4)
 
-        # Loop starts at 0x08
-        Op.LDA, ADDR_RESULT,        # 0x08: AC = result
-        Op.CALL, SUBROUTINE_ADDR,   # 0x0A: Call add5, AC = result + 5
-        Op.STA, ADDR_RESULT,        # 0x0C: result = AC
-        Op.LDA, ADDR_COUNTER,       # 0x0E: AC = counter
-        Op.ADD, ADDR_NEG_ONE,       # 0x10: AC = counter - 1
-        Op.STA, ADDR_COUNTER,       # 0x12: counter = AC
-        Op.JNZ, 0x08,               # 0x14: If counter != 0, loop
+        # Loop starts at 0x0C
+        0x20, 0x80, 0x00,         # 0x0C: LDA 0x0080 (result)
+        0x72, 0x30, 0x00,         # 0x0F: CALL add5 at 0x30
+        0x10, 0x80, 0x00,         # 0x12: STA 0x0080 (result = AC)
+        0x20, 0x82, 0x00,         # 0x15: LDA 0x0082 (counter)
+        0x30, 0x84, 0x00,         # 0x18: ADD 0x0084 (-1)
+        0x10, 0x82, 0x00,         # 0x1B: STA 0x0082 (counter--)
+        0xB0, 0x0C, 0x00,         # 0x1E: JNZ 0x0C (loop)
 
         # Loop done, output result
-        Op.LDA, ADDR_RESULT,        # 0x16: AC = result
-        Op.OUT, 0x00,               # 0x18: Output result
-        Op.HLT, 0x00,               # 0x1A: Halt
+        0x20, 0x80, 0x00,         # 0x21: LDA 0x0080 (result)
+        0xD0, 0x00,               # 0x24: OUT 0
+        0xF0,                     # 0x26: HLT
     ]
 
-    # Pad to subroutine address
-    while len(program) < SUBROUTINE_ADDR:
+    # Pad to subroutine address 0x30
+    while len(program) < 0x30:
         program.append(0x00)
 
-    # Subroutine add5: f(x) = x + 5
+    # Subroutine add5 at 0x30: f(x) = x + 5
     program.extend([
-        Op.ADD, ADDR_FIVE,          # 0x30: AC = AC + 5
-        Op.RET, 0x00,               # 0x32: Return
+        0x30, 0x86, 0x00,         # 0x30: ADD 0x0086 (+5)
+        0x73,                     # 0x33: RET
     ])
 
-    # Pad to data section
-    while len(program) < ADDR_RESULT:
-        program.append(0x00)
+    await tb.load_program(program, convert_to_16bit=False)
 
-    # Data section
-    program.append(0x00)            # 0x80: result (initialized to 0)
-    program.append(0x00)            # 0x81: counter (will be set to 4)
-    program.append(0xFF)            # 0x82: -1 (two's complement)
-    program.append(0x05)            # 0x83: constant 5
+    # Load constants in data area
+    await tb.load_byte(0x0084, 0xFF)  # -1 (low byte)
+    await tb.load_byte(0x0085, 0xFF)  # -1 (high byte, sign-extended)
+    await tb.load_byte(0x0086, 0x05)  # 5 (low byte)
+    await tb.load_byte(0x0087, 0x00)  # 5 (high byte)
+
+    await tb.reset()
 
     expected = 20  # 0 + 5 + 5 + 5 + 5 = 20
 
     dut._log.info("Testing for-loop with CALL to f(x) = x + 5")
-    dut._log.info("Program: loop 4 times calling add5, expected result = 20")
-
-    await tb.load_program(program)
-    await tb.reset()
-
     result = await tb.wait_for_io_write(max_cycles=80000)
 
     dut._log.info(f"I/O output received: {result} (expected: {expected})")
@@ -2757,20 +2744,30 @@ async def test_array_sum_indexed(dut):
     await tb.setup()
 
     # Use raw 16-bit format for precise control
-    # Array at 0x0080, 0x0081, 0x0082, 0x0083 (consecutive bytes)
-    # Using INX to increment X by 1 for each element
+    # IMPORTANT: Memory is 16-bit word addressed. LDA_X reads 16 bits.
+    # Array elements must be spaced 2 bytes apart.
+    # Array at 0x0080, 0x0082, 0x0084, 0x0086 (every 2 bytes)
+    # X increments by 2 for each element using ADDX or manual addition.
 
-    # Pre-load array data (since using convert_to_16bit=False)
-    await tb.load_byte(0x0080, 5)
-    await tb.load_byte(0x0081, 10)
-    await tb.load_byte(0x0082, 15)
-    await tb.load_byte(0x0083, 20)
-    await tb.load_byte(0x0090, 0)   # sum = 0
-    await tb.load_byte(0x0091, 4)   # count = 4
-    await tb.load_byte(0x0092, 0xFF)  # neg_one = -1 (low byte)
-    await tb.load_byte(0x0093, 0xFF)  # neg_one high byte (sign-extended)
+    # Pre-load array data (16-bit values, little-endian)
+    await tb.load_byte(0x0080, 5)     # array[0] low
+    await tb.load_byte(0x0081, 0)     # array[0] high
+    await tb.load_byte(0x0082, 10)    # array[1] low
+    await tb.load_byte(0x0083, 0)     # array[1] high
+    await tb.load_byte(0x0084, 15)    # array[2] low
+    await tb.load_byte(0x0085, 0)     # array[2] high
+    await tb.load_byte(0x0086, 20)    # array[3] low
+    await tb.load_byte(0x0087, 0)     # array[3] high
 
-    # Program
+    # Sum and control variables
+    await tb.load_byte(0x0090, 0)     # sum low
+    await tb.load_byte(0x0091, 0)     # sum high
+    await tb.load_byte(0x0094, 4)     # count = 4 (low)
+    await tb.load_byte(0x0095, 0)     # count high
+    await tb.load_byte(0x0096, 0xFF)  # neg_one = -1 (low byte)
+    await tb.load_byte(0x0097, 0xFF)  # neg_one high byte
+
+    # Program: sum 4 elements using X as index, incrementing by 2 each time
     program = [
         # Initialize X = 0
         0x7C, 0x00, 0x00,      # 0x00: LDXI 0
@@ -2780,15 +2777,16 @@ async def test_array_sum_indexed(dut):
         0x30, 0x90, 0x00,      # 0x06: ADD 0x0090 (AC += sum)
         0x10, 0x90, 0x00,      # 0x09: STA 0x0090 (sum = AC)
         0x7F,                   # 0x0C: INX (X++)
-        0x20, 0x91, 0x00,      # 0x0D: LDA 0x0091 (AC = count)
-        0x30, 0x92, 0x00,      # 0x10: ADD 0x0092 (AC -= 1)
-        0x10, 0x91, 0x00,      # 0x13: STA 0x0091 (count = AC)
-        0xB0, 0x03, 0x00,      # 0x16: JNZ 0x0003 (loop if count != 0)
+        0x7F,                   # 0x0D: INX (X++) - increment by 2 for 16-bit values
+        0x20, 0x94, 0x00,      # 0x0E: LDA 0x0094 (AC = count)
+        0x30, 0x96, 0x00,      # 0x11: ADD 0x0096 (AC -= 1)
+        0x10, 0x94, 0x00,      # 0x14: STA 0x0094 (count = AC)
+        0xB0, 0x03, 0x00,      # 0x17: JNZ 0x0003 (loop if count != 0)
 
         # Output sum
-        0x20, 0x90, 0x00,      # 0x19: LDA 0x0090 (AC = sum)
-        0xD0, 0x00,            # 0x1C: OUT 0
-        0xF0,                   # 0x1E: HLT
+        0x20, 0x90, 0x00,      # 0x1A: LDA 0x0090 (AC = sum)
+        0xD0, 0x00,            # 0x1D: OUT 0
+        0xF0,                   # 0x1F: HLT
     ]
     expected = 50  # 5 + 10 + 15 + 20 = 50
 
@@ -5683,15 +5681,16 @@ async def test_push_fp_basic(dut):
     await tb.setup()
 
     # Set FP to known value, push it, pop to AC, verify
+    # With 16-bit stack ops, each PUSH/POP changes SP by 2
     program = [
         Op.TSF,         # 0x00: FP = SP (0xFF)
         Op.LDI, 0x33,   # 0x01: AC = 0x33
-        Op.PUSH,        # 0x03: Push 0x33, SP = 0xFE
+        Op.PUSH,        # 0x03: Push 0x33, SP = 0xFD (SP -= 2)
         Op.LDI, 0x44,   # 0x04: AC = 0x44
-        Op.PUSH,        # 0x06: Push 0x44, SP = 0xFD
-        Op.TSF,         # 0x07: FP = SP (0xFD) - capture current SP as FP
-        Op.PUSH_FP,     # 0x08: Push FP (0xFD), SP = 0xFC
-        Op.POP,         # 0x09: Pop to AC (should be 0xFD)
+        Op.PUSH,        # 0x06: Push 0x44, SP = 0xFB (SP -= 2)
+        Op.TSF,         # 0x07: FP = SP (0xFB) - capture current SP as FP
+        Op.PUSH_FP,     # 0x08: Push FP (0xFB), SP = 0xF9 (SP -= 2)
+        Op.POP,         # 0x09: Pop to AC (should be 0xFB)
         Op.OUT, 0x00,   # 0x0A: Output AC
         Op.HLT, 0x00,   # 0x0C: Halt
     ]
@@ -5699,7 +5698,7 @@ async def test_push_fp_basic(dut):
     await tb.load_program(program)
     await tb.reset()
 
-    expected = 0xFD  # FP value that was pushed
+    expected = 0xFB  # FP value that was pushed (0xFF - 2 - 2 = 0xFB)
     result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"PUSH_FP test: result=0x{result:02X}, expected=0x{expected:02X}")
@@ -5800,42 +5799,75 @@ async def test_sta_fp_indexed(dut):
 
 @cocotb.test()
 async def test_function_prologue_epilogue(dut):
-    """Test function call and return with simple prologue/epilogue"""
+    """Test proper function prologue/epilogue with PUSH_FP/TSF and POP_FP/TFS"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # IMPORTANT: PUSH/PUSH_FP/POP/POP_FP write/read 16 bits but only decrement/increment SP by 1.
-    # This causes overlap with 16-bit CALL return address.
-    # To avoid this, we test a simplified version without PUSH_FP in the function.
-    # Just test that a function can be called and returns correctly.
+    # Test proper function prologue/epilogue pattern:
+    # Prologue: PUSH_FP, TSF (save old FP, set FP to current SP)
+    # Epilogue: TFS, POP_FP, RET (restore SP from FP, restore FP, return)
+    #
+    # With SP -= 2 for all stack operations, PUSH_FP in function doesn't corrupt return address.
+    #
+    # Stack layout (SP starts at 0xFF):
+    # Main:
+    #   PUSH param: SP = 0xFD, param at 0xFD-0xFE
+    #   CALL func:  SP = 0xFB, ret_addr at 0xFB-0xFC
+    # Function prologue:
+    #   PUSH_FP:    SP = 0xF9, old_fp at 0xF9-0xFA
+    #   TSF:        FP = 0xF9
+    # Function epilogue:
+    #   TFS:        SP = 0xF9
+    #   POP_FP:     SP = 0xFB, FP restored
+    #   RET:        SP = 0xFD, PC from stack
 
-    FP_MARKER = 0x3B
+    PARAM_VALUE = 0x42
+    FUNC_ADDR = 0x20
 
     program = [
-        # Main code: set FP to a marker value
-        0xE0, FP_MARKER, 0x00,  # 0x00: LDI FP_MARKER
-        0x70,                    # 0x03: PUSH
-        0x0D,                    # 0x04: POP_FP (FP = FP_MARKER)
-        # Call function that just returns (no stack operations)
-        0x72, 0x18, 0x00,       # 0x05: CALL function at 0x18
-        # After return, verify FP is unchanged
-        0x0C,                    # 0x08: PUSH_FP
-        0x71,                    # 0x09: POP (AC = FP)
-        0xD0, 0x00,             # 0x0A: OUT 0
-        0xF0,                    # 0x0C: HLT
+        # Main: establish a known FP value, call function with parameter
+        0xE0, 0xAA, 0x00,        # 0x00: LDI 0xAA (marker for old FP)
+        0x70,                     # 0x03: PUSH
+        0x0D,                     # 0x04: POP_FP (FP = 0xAA marker)
 
-        # Padding to 0x18
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  # 0x0D-0x17
+        # Push parameter and call function
+        0xE0, PARAM_VALUE, 0x00, # 0x05: LDI param
+        0x70,                     # 0x08: PUSH param (SP = 0xFD)
+        0x72, FUNC_ADDR, 0x00,   # 0x09: CALL function (SP = 0xFB)
 
-        # Simple function at 0x18 - just increment AC and return
-        # No PUSH_FP to avoid corrupting return address
-        0x75,                    # 0x18: INC (dummy operation)
-        0x73,                    # 0x19: RET
+        # After return, clean up parameter and verify FP is preserved
+        0x71,                     # 0x0C: POP (clean up param, SP = 0xFF)
+        0x0C,                     # 0x0D: PUSH_FP
+        0x71,                     # 0x0E: POP (AC = FP, should be 0xAA)
+        0xD0, 0x00,              # 0x0F: OUT 0
+        0xF0,                     # 0x11: HLT
     ]
+
+    # Pad to function address
+    while len(program) < FUNC_ADDR:
+        program.append(0x00)
+
+    # Function at FUNC_ADDR with proper prologue/epilogue
+    program.extend([
+        # Prologue
+        0x0C,                     # PUSH_FP (save caller's FP, SP = 0xF9)
+        0x0A,                     # TSF (FP = SP = 0xF9)
+
+        # Function body: access parameter at FP + 4 (skip 2 bytes for old_fp + 2 bytes for ret_addr)
+        0x24, 0x04, 0x00,        # LDA_FP 0x04 (get parameter)
+        0x75,                     # INC (modify it)
+        0x10, 0x80, 0x00,        # STA 0x0080 (store result somewhere)
+
+        # Epilogue
+        0x0B,                     # TFS (SP = FP)
+        0x0D,                     # POP_FP (restore FP, SP = 0xFB)
+        0x73,                     # RET (PC from stack, SP = 0xFD)
+    ])
+
     await tb.load_program(program, convert_to_16bit=False)
     await tb.reset()
 
-    expected = FP_MARKER
+    expected = 0xAA  # FP marker should be preserved
     result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"Function prologue/epilogue test: result=0x{result:02X}, expected=0x{expected:02X}")
@@ -5845,35 +5877,59 @@ async def test_function_prologue_epilogue(dut):
 
 @cocotb.test()
 async def test_fp_local_variable_access(dut):
-    """Test accessing local variables via FP-indexed addressing"""
+    """Test accessing multiple local variables via FP-indexed addressing"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # Use raw 16-bit format for precise stack control
-    # IMPORTANT: PUSH decrements SP by 1 but writes 16 bits (2 bytes).
-    # This means consecutive PUSHes overlap! Write spans addr and addr+1.
-    # To avoid overlap, we only use one PUSH and read it back via LDA_FP.
-    # Use values < 0x80 to avoid sign extension.
-    LOCAL_VALUE = 0x5A
+    # Test multiple local variables allocated with consecutive PUSHes
+    # With SP -= 2 for each PUSH, consecutive PUSHes don't overlap.
+    #
+    # Stack layout (SP starts at 0x00FF):
+    #   After PUSH 0x11: SP = 0xFD, local1 at 0xFD-0xFE
+    #   After PUSH 0x22: SP = 0xFB, local2 at 0xFB-0xFC
+    #   After PUSH 0x33: SP = 0xF9, local3 at 0xF9-0xFA
+    #   After TSF: FP = 0xF9
+    #
+    # Access pattern relative to FP:
+    #   local3 at FP + 0 = 0xF9 (most recent push)
+    #   local2 at FP + 2 = 0xFB
+    #   local1 at FP + 4 = 0xFD
+    LOCAL1, LOCAL2, LOCAL3 = 0x11, 0x22, 0x33
 
     program = [
-        # Push one value (SP starts at 0x00FF)
-        0xE0, LOCAL_VALUE, 0x00,   # LDI LOCAL_VALUE (0x5A)
-        0x70,                        # PUSH (SP-- = 0x00FE, writes 16-bit at 0x00FE)
+        # Allocate 3 local variables with consecutive PUSHes
+        0xE0, LOCAL1, 0x00,        # LDI 0x11
+        0x70,                       # PUSH local1 (SP = 0xFD)
+        0xE0, LOCAL2, 0x00,        # LDI 0x22
+        0x70,                       # PUSH local2 (SP = 0xFB)
+        0xE0, LOCAL3, 0x00,        # LDI 0x33
+        0x70,                       # PUSH local3 (SP = 0xF9)
+
         # Set FP to current SP
-        0x0A,                        # TSF (FP = SP = 0x00FE)
-        # Stack layout (16-bit write at 0x00FE):
-        # MEM[0x00FE] = 0x5A (low byte), MEM[0x00FF] = 0x00 (high byte)
-        # FP = 0x00FE, so LDA_FP 0 reads from 0x00FE (the pushed value)
-        0xE0, 0x00, 0x00,           # LDI 0 (clear AC)
-        0x24, 0x00, 0x00,           # LDA_FP 0x00 (access FP+0 = local variable)
-        0xD0, 0x00,                  # OUT 0
-        0xF0,                        # HLT
+        0x0A,                       # TSF (FP = SP = 0xF9)
+
+        # Access local3 at FP + 0 and save
+        0x24, 0x00, 0x00,          # LDA_FP 0x00 (local3 = 0x33)
+        0x10, 0x80, 0x00,          # STA 0x0080 (save for verification)
+
+        # Access local2 at FP + 2
+        0x24, 0x02, 0x00,          # LDA_FP 0x02 (local2 = 0x22)
+        0x10, 0x82, 0x00,          # STA 0x0082
+
+        # Access local1 at FP + 4
+        0x24, 0x04, 0x00,          # LDA_FP 0x04 (local1 = 0x11)
+
+        # Sum all locals: local1 + local2 + local3
+        0x30, 0x80, 0x00,          # ADD local3 (0x11 + 0x33 = 0x44)
+        0x30, 0x82, 0x00,          # ADD local2 (0x44 + 0x22 = 0x66)
+
+        0xD0, 0x00,                 # OUT 0
+        0xF0,                       # HLT
     ]
     await tb.load_program(program, convert_to_16bit=False)
     await tb.reset()
 
-    expected = LOCAL_VALUE
+    expected = LOCAL1 + LOCAL2 + LOCAL3  # 0x11 + 0x22 + 0x33 = 0x66
     result = await tb.wait_for_io_write(max_cycles=50000)
 
     dut._log.info(f"FP local variable access test: result=0x{result:02X}, expected=0x{expected:02X}")
@@ -5888,34 +5944,34 @@ async def test_fp_parameter_access(dut):
     await tb.setup()
 
     # Use raw 16-bit format for precise control
-    # Stack layout (byte addressed):
-    # - Parameter pushed before CALL: PUSH decrements SP by 1 (8-bit op)
+    # Stack layout (byte addressed) with 16-bit stack operations:
+    # - Parameter pushed before CALL: PUSH decrements SP by 2 (16-bit op)
     # - Return address from CALL: CALL decrements SP by 2 (16-bit op)
-    # - Saved FP from PUSH_FP: PUSH_FP decrements SP by 1 (8-bit op)
-    # So: param(1 byte) + ret_addr(2 bytes) + saved_fp(1 byte) = 4 bytes total
+    # - Saved FP from PUSH_FP: PUSH_FP decrements SP by 2 (16-bit op)
+    # So: param(2 bytes) + ret_addr(2 bytes) + saved_fp(2 bytes) = 6 bytes total
     # FP points to saved_fp location after TSF
-    # Parameter is at FP + 3 (skip 1 byte for saved_fp + 2 bytes for ret_addr)
+    # Parameter is at FP + 4 (skip 2 bytes for saved_fp + 2 bytes for ret_addr)
     PARAM_VALUE = 0x55
 
     program = [
         # Main: push parameter and call
         0xE0, PARAM_VALUE, 0x00,  # 0x00: LDI PARAM_VALUE
-        0x70,                      # 0x03: PUSH parameter (SP -= 1)
-        0x72, 0x10, 0x00,         # 0x04: CALL 0x10 (SP -= 2)
+        0x70,                      # 0x03: PUSH parameter (SP -= 2, SP=0xFD)
+        0x72, 0x10, 0x00,         # 0x04: CALL 0x10 (SP -= 2, SP=0xFB)
         0xF0,                      # 0x07: HLT
 
         # Padding to 0x10
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  # 0x08-0x0F
 
         # Function at 0x10
-        0x0C,                      # 0x10: PUSH_FP (save old FP, SP -= 1)
-        0x0A,                      # 0x11: TSF (FP = SP)
+        0x0C,                      # 0x10: PUSH_FP (save old FP, SP -= 2, SP=0xF9)
+        0x0A,                      # 0x11: TSF (FP = SP = 0xF9)
         # Stack (byte addresses, SP=0x00FF initially):
-        # 0x00FE: param (pushed with PUSH, 1 byte)
-        # 0x00FC-0x00FD: ret_addr (pushed with CALL, 2 bytes)
-        # 0x00FB: old_fp (pushed with PUSH_FP, 1 byte) <- FP points here
-        # param is at FP + 3 (1 byte old_fp + 2 bytes ret_addr)
-        0x24, 0x03, 0x00,         # 0x12: LDA_FP 0x03 (get parameter)
+        # 0x00FD-0x00FE: param (pushed with PUSH, 2 bytes)
+        # 0x00FB-0x00FC: ret_addr (pushed with CALL, 2 bytes)
+        # 0x00F9-0x00FA: old_fp (pushed with PUSH_FP, 2 bytes) <- FP=0xF9
+        # param is at FP + 4 (2 bytes old_fp + 2 bytes ret_addr = 4)
+        0x24, 0x04, 0x00,         # 0x12: LDA_FP 0x04 (get parameter)
         0xD0, 0x00,                # 0x15: OUT 0
         0x0B,                      # 0x17: TFS (SP = FP)
         0x0D,                      # 0x18: POP_FP
@@ -6484,38 +6540,48 @@ async def test_spi_address_wrap_around(dut):
 
 @cocotb.test()
 async def test_deep_stack_multiple_push_pop(dut):
-    """Test pushing and popping many values on the stack"""
+    """Test pushing and popping many values on the stack (consecutive operations)"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # Test multiple PUSH/POP operations
-    # IMPORTANT: PUSH decrements SP by 1 but writes 16 bits (spans 2 bytes).
-    # Consecutive PUSHes overlap! To test proper PUSH/POP, we use values
-    # stored in memory and verify single PUSH/POP pairs work correctly.
+    # Test multiple consecutive PUSH operations followed by POPs
+    # With SP -= 2 for each PUSH, consecutive PUSHes don't overlap.
+    # Push 5 values, then pop them all in LIFO order and sum them.
     #
-    # This test stores values in memory, then uses PUSH/POP to verify
-    # stack operations work for single values without overlap issues.
-    #
-    # Test: push value, pop it, push another, pop it, verify sum
+    # Stack layout (SP starts at 0xFF):
+    #   After PUSH 0x10: SP = 0xFD
+    #   After PUSH 0x20: SP = 0xFB
+    #   After PUSH 0x04: SP = 0xF9
+    #   After PUSH 0x08: SP = 0xF7
+    #   After PUSH 0x02: SP = 0xF5
+    # POP order: 0x02, 0x08, 0x04, 0x20, 0x10
     program = [
-        # First push/pop cycle
+        # Push 5 values consecutively
         0xE0, 0x10, 0x00,  # LDI 0x0010
-        0x70,              # PUSH
-        0x71,              # POP (AC = 0x10)
-        0x10, 0x00, 0x01,  # STA 0x0100 (save first value)
-
-        # Second push/pop cycle
+        0x70,              # PUSH (0x10)
         0xE0, 0x20, 0x00,  # LDI 0x0020
-        0x70,              # PUSH
-        0x71,              # POP (AC = 0x20)
-        0x30, 0x00, 0x01,  # ADD 0x0100 (sum = 0x30)
-        0x10, 0x00, 0x01,  # STA 0x0100
-
-        # Third push/pop cycle
+        0x70,              # PUSH (0x20)
         0xE0, 0x04, 0x00,  # LDI 0x0004
-        0x70,              # PUSH
+        0x70,              # PUSH (0x04)
+        0xE0, 0x08, 0x00,  # LDI 0x0008
+        0x70,              # PUSH (0x08)
+        0xE0, 0x02, 0x00,  # LDI 0x0002
+        0x70,              # PUSH (0x02)
+
+        # Pop all values and sum them (LIFO order)
+        0x71,              # POP (AC = 0x02)
+        0x10, 0x00, 0x01,  # STA 0x0100 (sum = 0x02)
+        0x71,              # POP (AC = 0x08)
+        0x30, 0x00, 0x01,  # ADD 0x0100 (sum = 0x0A)
+        0x10, 0x00, 0x01,  # STA 0x0100
         0x71,              # POP (AC = 0x04)
-        0x30, 0x00, 0x01,  # ADD 0x0100 (sum = 0x34)
+        0x30, 0x00, 0x01,  # ADD 0x0100 (sum = 0x0E)
+        0x10, 0x00, 0x01,  # STA 0x0100
+        0x71,              # POP (AC = 0x20)
+        0x30, 0x00, 0x01,  # ADD 0x0100 (sum = 0x2E)
+        0x10, 0x00, 0x01,  # STA 0x0100
+        0x71,              # POP (AC = 0x10)
+        0x30, 0x00, 0x01,  # ADD 0x0100 (sum = 0x3E)
 
         0xD0, 0x00,        # OUT 0
         0xF0,              # HLT
@@ -6524,7 +6590,7 @@ async def test_deep_stack_multiple_push_pop(dut):
     await tb.reset()
 
     result = await tb.wait_for_io_write(max_cycles=80000)
-    expected = 0x10 + 0x20 + 0x04  # 0x34 = 52
+    expected = 0x10 + 0x20 + 0x04 + 0x08 + 0x02  # 0x3E = 62
     dut._log.info(f"Deep stack push/pop test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
     dut._log.info("Test PASSED!")
@@ -6653,43 +6719,70 @@ async def test_deep_stack_nested_calls_5_levels(dut):
 
 @cocotb.test()
 async def test_deep_stack_call_with_push_pop(dut):
-    """Test function calls combined with explicit PUSH/POP for local variables"""
+    """Test function calls with stack-based parameter passing (PUSH before CALL)"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # Main: push parameter, call function, function uses stack for locals
-    # LDI is 3 bytes in 16-bit mode
+    # Test proper stack-based parameter passing:
+    # 1. Caller PUSHes parameter
+    # 2. CALL function
+    # 3. Function uses prologue (PUSH_FP, TSF) to set up frame
+    # 4. Function accesses parameter via FP offset
+    # 5. Function uses epilogue (TFS, POP_FP, RET)
+    # 6. Caller cleans up parameter with POP
+    #
+    # Stack layout:
+    #   After PUSH param: SP = 0xFD, param at 0xFD-0xFE
+    #   After CALL:       SP = 0xFB, ret_addr at 0xFB-0xFC
+    #   After PUSH_FP:    SP = 0xF9, old_fp at 0xF9-0xFA
+    #   After TSF:        FP = 0xF9
+    #   param is at FP + 4
+
+    PARAM_VALUE = 0x10
+    LOCAL_VALUE = 0x05
+    FUNC_ADDR = 0x20
 
     main_code = [
-        0xE0, 0x10, 0x00,  # LDI 0x0010 (parameter)
-        0x70,              # PUSH parameter
-        0x72, 0x20, 0x00,  # CALL func at 0x0020
-        0xD0, 0x00,        # OUT result
-        0xF0,              # HLT
+        # Push parameter and call function
+        0xE0, PARAM_VALUE, 0x00,  # LDI parameter
+        0x70,                      # PUSH param (SP = 0xFD)
+        0x72, FUNC_ADDR, 0x00,    # CALL func (SP = 0xFB)
+        # Save result before cleaning up param (POP overwrites AC)
+        0x10, 0x90, 0x00,         # STA 0x0090 (save function result)
+        0x71,                      # POP (clean up param, overwrites AC)
+        0x20, 0x90, 0x00,         # LDA 0x0090 (restore result)
+        0xD0, 0x00,               # OUT result
+        0xF0,                      # HLT
     ]
     await tb.load_program(main_code, convert_to_16bit=False)
 
-    # Simplified function at 0x0020:
-    # Push local, pop it, save to memory, access param via FP, add and return
+    # Function at FUNC_ADDR with proper prologue/epilogue
     func_code = [
-        0xE0, 0x05, 0x00,  # LDI 0x0005
-        0x70,              # PUSH (local)
-        0x71,              # POP (get local back)
-        0x10, 0x60, 0x00,  # STA 0x0060 (save local = 0x05)
-        # Get parameter from stack: after CALL+PUSH+POP, param is at SP+2
-        0x0A,              # TSF (FP = SP)
-        0x24, 0x02, 0x00,  # LDA_FP +2 (skip ret addr to get param)
-        0x30, 0x60, 0x00,  # ADD saved local
-        0x73,              # RET
+        # Prologue
+        0x0C,              # PUSH_FP (SP = 0xF9)
+        0x0A,              # TSF (FP = 0xF9)
+
+        # Function body: get parameter at FP + 4, add local constant
+        0x24, 0x04, 0x00,  # LDA_FP 0x04 (get param = 0x10)
+        0x30, 0x70, 0x00,  # ADD 0x0070 (add local constant = 0x05)
+
+        # Epilogue
+        0x0B,              # TFS (SP = FP)
+        0x0D,              # POP_FP (restore FP, SP = 0xFB)
+        0x73,              # RET (AC = 0x15)
     ]
     for i, byte in enumerate(func_code):
-        await tb.load_byte(0x0020 + i, byte)
+        await tb.load_byte(FUNC_ADDR + i, byte)
+
+    # Store local constant at 0x0070
+    await tb.load_byte(0x0070, LOCAL_VALUE)
+    await tb.load_byte(0x0071, 0x00)
 
     await tb.reset()
 
     result = await tb.wait_for_io_write(max_cycles=50000)
-    expected = 0x10 + 0x05  # param + local = 0x15
-    dut._log.info(f"Stack with PUSH/POP test: result=0x{result:02X}, expected=0x{expected:02X}")
+    expected = PARAM_VALUE + LOCAL_VALUE  # 0x10 + 0x05 = 0x15
+    dut._log.info(f"Stack-based parameter passing test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
     dut._log.info("Test PASSED!")
 
@@ -6739,40 +6832,53 @@ async def test_deep_stack_10_nested_calls(dut):
 
 @cocotb.test()
 async def test_deep_stack_alternating_call_push(dut):
-    """Test alternating CALL and PUSH operations"""
+    """Test alternating PUSH and CALL operations - values survive across nested calls"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # Main: PUSH value, CALL func, func PUSHes, CALLs another, etc.
-    # LDI is 3 bytes in 16-bit mode
+    # Test that PUSH before CALL works correctly with consecutive operations.
+    # Main pushes a value, calls func1, which pushes another value and calls func2.
+    # All values should be preserved and recoverable after returns.
+    #
+    # Stack layout:
+    #   Main PUSH 0x11: SP = 0xFD
+    #   CALL func1:     SP = 0xFB
+    #   func1 PUSH 0x22: SP = 0xF9
+    #   CALL func2:     SP = 0xF7
+    #   func2 PUSH 0x33: SP = 0xF5
+    #   func2 RET:      SP = 0xF7
+    #   func2 POP:      SP = 0xF9
+    #   func1 POP:      SP = 0xFB
+    #   func1 RET:      SP = 0xFD
+    #   Main POP:       SP = 0xFF
 
     main_code = [
         0xE0, 0x11, 0x00,  # LDI 0x0011
-        0x70,              # PUSH 0x11
-        0x72, 0x20, 0x00,  # CALL func1
-        0x71,              # POP (should get 0x11 back)
-        0xD0, 0x00,        # OUT
+        0x70,              # PUSH (main's value, SP = 0xFD)
+        0x72, 0x20, 0x00,  # CALL func1 (SP = 0xFB)
+        0x71,              # POP (get main's value back, SP = 0xFF)
+        0xD0, 0x00,        # OUT (should be 0x11)
         0xF0,              # HLT
     ]
     await tb.load_program(main_code, convert_to_16bit=False)
 
-    # func1: PUSH 0x22, CALL func2, POP, RET
+    # func1: push value, call func2, pop and add, return
     func1 = [
         0xE0, 0x22, 0x00,  # LDI 0x0022
-        0x70,              # PUSH 0x22
-        0x72, 0x40, 0x00,  # CALL func2
-        0x71,              # POP (get 0x22)
-        0x73,              # RET
+        0x70,              # PUSH (func1's value, SP = 0xF9)
+        0x72, 0x40, 0x00,  # CALL func2 (SP = 0xF7)
+        0x71,              # POP (get func1's value, SP = 0xF9)
+        0x73,              # RET (SP = 0xFB)
     ]
     for i, byte in enumerate(func1):
         await tb.load_byte(0x0020 + i, byte)
 
-    # func2: PUSH 0x33, POP, RET
+    # func2: push value, verify it works, pop, return
     func2 = [
         0xE0, 0x33, 0x00,  # LDI 0x0033
-        0x70,              # PUSH 0x33
-        0x71,              # POP (get 0x33)
-        0x73,              # RET
+        0x70,              # PUSH (func2's value, SP = 0xF5)
+        0x71,              # POP (verify works, SP = 0xF7)
+        0x73,              # RET (SP = 0xF9)
     ]
     for i, byte in enumerate(func2):
         await tb.load_byte(0x0040 + i, byte)
@@ -6780,51 +6886,57 @@ async def test_deep_stack_alternating_call_push(dut):
     await tb.reset()
 
     result = await tb.wait_for_io_write(max_cycles=50000)
-    expected = 0x11  # Original pushed value
-    dut._log.info(f"Alternating CALL/PUSH test: result=0x{result:02X}, expected=0x{expected:02X}")
+    expected = 0x11  # Main's original pushed value
+    dut._log.info(f"Alternating PUSH/CALL test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
     dut._log.info("Test PASSED!")
 
 
 @cocotb.test()
 async def test_deep_stack_recursion_simulation(dut):
-    """Test simulated recursion (iterative implementation to avoid infinite recursion)"""
+    """Test stack-based recursion simulation - push operands, pop and compute"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
     # Simulate factorial(4) = 24 using stack
-    # Push 4, 3, 2, 1 then multiply them
-    # 4 * 3 * 2 * 1 = 24 = 0x18
-    # LDI is 3 bytes in 16-bit mode
+    # Push 4, 3, 2, 1 onto stack, then pop them and multiply
+    # With SP -= 2 for each PUSH, consecutive PUSHes work correctly.
+    #
+    # Stack layout after pushes (SP starts at 0xFF):
+    #   PUSH 4: SP = 0xFD, value at 0xFD-0xFE
+    #   PUSH 3: SP = 0xFB, value at 0xFB-0xFC
+    #   PUSH 2: SP = 0xF9, value at 0xF9-0xFA
+    #   PUSH 1: SP = 0xF7, value at 0xF7-0xF8
+    # Pop order: 1, 2, 3, 4 (LIFO)
+    # Multiply: 1 * 2 * 3 * 4 = 24
 
-    # IMPORTANT: PUSH decrements SP by 1 but writes 16 bits.
-    # Consecutive PUSHes overlap! Use memory instead for storing operands.
-    # Compute 4! = 4*3*2*1 = 24 using multiplications
     program = [
-        # Store operands in memory
+        # Push 4 operands onto stack consecutively
         0xE0, 0x04, 0x00,  # LDI 4
-        0x10, 0x80, 0x00,  # STA 0x0080
+        0x70,              # PUSH (SP = 0xFD)
         0xE0, 0x03, 0x00,  # LDI 3
-        0x10, 0x82, 0x00,  # STA 0x0082
+        0x70,              # PUSH (SP = 0xFB)
         0xE0, 0x02, 0x00,  # LDI 2
-        0x10, 0x84, 0x00,  # STA 0x0084
+        0x70,              # PUSH (SP = 0xF9)
         0xE0, 0x01, 0x00,  # LDI 1
-        0x10, 0x86, 0x00,  # STA 0x0086
+        0x70,              # PUSH (SP = 0xF7)
 
-        # Compute 1 * 2 = 2
-        0x20, 0x86, 0x00,  # LDA 0x0086 (AC = 1)
+        # Pop first operand (1) to start multiplication
+        0x71,              # POP (AC = 1, SP = 0xF9)
         0x7D,              # TAX (X = 1)
-        0x20, 0x84, 0x00,  # LDA 0x0084 (AC = 2)
+
+        # Pop second operand (2) and multiply
+        0x71,              # POP (AC = 2, SP = 0xFB)
         0x09,              # MUL (AC = 2*1 = 2)
-
-        # Compute 2 * 3 = 6
         0x7D,              # TAX (X = 2)
-        0x20, 0x82, 0x00,  # LDA 0x0082 (AC = 3)
-        0x09,              # MUL (AC = 3*2 = 6)
 
-        # Compute 6 * 4 = 24
+        # Pop third operand (3) and multiply
+        0x71,              # POP (AC = 3, SP = 0xFD)
+        0x09,              # MUL (AC = 3*2 = 6)
         0x7D,              # TAX (X = 6)
-        0x20, 0x80, 0x00,  # LDA 0x0080 (AC = 4)
+
+        # Pop fourth operand (4) and multiply
+        0x71,              # POP (AC = 4, SP = 0xFF)
         0x09,              # MUL (AC = 4*6 = 24)
 
         0xD0, 0x00,        # OUT
@@ -6835,7 +6947,7 @@ async def test_deep_stack_recursion_simulation(dut):
 
     result = await tb.wait_for_io_write(max_cycles=50000)
     expected = 24  # 4! = 24 = 0x18
-    dut._log.info(f"Recursion simulation (factorial) test: result=0x{result:02X}, expected=0x{expected:02X}")
+    dut._log.info(f"Stack-based recursion simulation (factorial) test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
     dut._log.info("Test PASSED!")
 
@@ -6886,48 +6998,77 @@ async def test_deep_stack_push_pop_boundary(dut):
 
 @cocotb.test()
 async def test_deep_stack_frame_pointer_nested(dut):
-    """Test nested function calls using frame pointer for local access"""
+    """Test nested function calls with stack-based parameter passing and frame pointers"""
     tb = NeanderTestbench(dut)
     await tb.setup()
 
-    # Main calls func1, func1 sets up frame, stores local, calls func2,
-    # func2 sets up its own frame, both return correctly
-    # LDI is 3 bytes in 16-bit mode. Use value < 0x80 to avoid sign extension.
+    # Test nested functions with proper stack-based calling convention:
+    # - Caller pushes parameter
+    # - CALL function
+    # - Function uses prologue (PUSH_FP, TSF)
+    # - Function accesses param via FP
+    # - Function can call nested function with its own params
+    # - Function uses epilogue (TFS, POP_FP, RET)
+    # - Caller cleans up parameter
 
-    PARAM_VALUE = 0x5A  # Use value < 0x80
+    PARAM_VALUE = 0x10  # Start value
 
     main_code = [
-        0xE0, PARAM_VALUE, 0x00,  # LDI PARAM_VALUE
-        0x70,              # PUSH param
-        0x72, 0x20, 0x00,  # CALL func1
-        0xD0, 0x00,        # OUT result
-        0xF0,              # HLT
+        # Main: push param, call func1, clean up, output
+        0xE0, PARAM_VALUE, 0x00,  # LDI param
+        0x70,                      # PUSH param
+        0x72, 0x20, 0x00,         # CALL func1
+        # Save result before cleaning up param (POP overwrites AC)
+        0x10, 0x90, 0x00,         # STA 0x0090 (save result)
+        0x71,                      # POP (clean up param)
+        0x20, 0x90, 0x00,         # LDA 0x0090 (restore result)
+        0xD0, 0x00,               # OUT result (should be param + 3)
+        0xF0,                      # HLT
     ]
     await tb.load_program(main_code, convert_to_16bit=False)
 
     # func1 at 0x0020:
-    # Prologue: PUSH_FP, TSF
-    # Access param at FP+4 (2 bytes old FP + 2 bytes ret addr)
-    # Call func2 (which increments AC)
-    # Epilogue: TFS, POP_FP, RET
+    # Prologue, get param from FP+4, increment, push as param to func2, epilogue
     func1 = [
+        # Prologue
         0x0C,              # PUSH_FP
         0x0A,              # TSF (FP = SP)
-        0x24, 0x04, 0x00,  # LDA_FP +4 (get param)
+
+        # Get param at FP+4 (2 bytes for old_fp + 2 bytes for ret_addr)
+        0x24, 0x04, 0x00,  # LDA_FP 0x04 (get param)
         0x75,              # INC (AC = param + 1)
-        0x72, 0x50, 0x00,  # CALL func2 (AC becomes param + 2)
-        # After return, AC has result from func2
+
+        # Push incremented value as param to func2
+        0x70,              # PUSH (param + 1)
+        0x72, 0x50, 0x00,  # CALL func2
+        # Save result before cleaning up param
+        0x10, 0x92, 0x00,  # STA 0x0092 (save result)
+        0x71,              # POP (clean up param)
+        0x20, 0x92, 0x00,  # LDA 0x0092 (restore result)
+
+        # Epilogue
         0x0B,              # TFS (SP = FP)
         0x0D,              # POP_FP
-        0x73,              # RET
+        0x73,              # RET (AC = param + 3 from func2)
     ]
     for i, byte in enumerate(func1):
         await tb.load_byte(0x0020 + i, byte)
 
     # func2 at 0x0050:
-    # Simple: INC AC and return
+    # Prologue, get param from FP+4, add 2, epilogue
     func2 = [
+        # Prologue
+        0x0C,              # PUSH_FP
+        0x0A,              # TSF (FP = SP)
+
+        # Get param at FP+4
+        0x24, 0x04, 0x00,  # LDA_FP 0x04 (get param = param + 1)
         0x75,              # INC (AC = param + 2)
+        0x75,              # INC (AC = param + 3)
+
+        # Epilogue
+        0x0B,              # TFS (SP = FP)
+        0x0D,              # POP_FP
         0x73,              # RET
     ]
     for i, byte in enumerate(func2):
@@ -6936,8 +7077,8 @@ async def test_deep_stack_frame_pointer_nested(dut):
     await tb.reset()
 
     result = await tb.wait_for_io_write(max_cycles=50000)
-    expected = PARAM_VALUE + 2  # param + 1 + 1
-    dut._log.info(f"FP nested calls test: result=0x{result:02X}, expected=0x{expected:02X}")
+    expected = PARAM_VALUE + 3  # param + 1 (func1) + 2 (func2)
+    dut._log.info(f"FP nested calls with stack params test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
     dut._log.info("Test PASSED!")
 
