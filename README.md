@@ -615,6 +615,54 @@ The SPI interface saves 11 pins while providing **2048x more memory** (64KB vs 3
 
 ## Quick Start
 
+### Building the LCC C Compiler
+
+The NEANDER-X processor has a custom LCC (Little C Compiler) backend that compiles C code to NEANDER-X assembly.
+
+```bash
+# Clone the LCC compiler with Neander-X backend
+git clone https://github.com/leonardoaraujosantos/lcc-neanderx.git
+cd lcc-neanderx
+
+# Build lburg (code generator generator)
+cd lburg
+make
+cd ..
+
+# Generate the Neander-X backend from the grammar
+./lburg/lburg src/neanderx.md > src/neanderx.c
+
+# Build the compiler
+make
+
+# Verify installation
+./build/rcc -target=neanderx/none
+```
+
+### Compiling C Programs
+
+```bash
+# Compile a C file to Neander-X assembly
+./build/rcc -target=neanderx/none your_program.c > your_program.s
+
+# Example: Compile the factorial sample
+./build/rcc -target=neanderx/none lcc_samples/07_factorial.c > factorial.s
+```
+
+### Sample Programs
+
+The `lcc_samples/` directory contains tested C programs with expected outputs:
+
+| Sample | Description | Expected Result |
+|--------|-------------|-----------------|
+| 01_hello.c | Return constant | 42 |
+| 02_locals.c | Local variables | 300 |
+| 03_arithmetic.c | Arithmetic ops | 100 |
+| 04_globals.c | Global variables | 15 |
+| 05_loop.c | Loop sum(10) | 55 |
+| 06_array.c | Array sum | 150 |
+| 07_factorial.c | factorial(5) | 120 |
+
 ### Running Tests
 
 ```bash
@@ -622,9 +670,13 @@ The SPI interface saves 11 pins while providing **2048x more memory** (64KB vs 3
 cd test
 make
 
-# Run comprehensive cocotb tests
+# Run comprehensive cocotb tests (includes LCC samples)
 cd cocotb_tests
 make
+
+# Run only LCC sample tests
+cd cocotb_tests
+make MODULE=test_lcc_samples
 ```
 
 ### Example Program
