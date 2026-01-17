@@ -38,10 +38,17 @@ SINGLE_BYTE_OPCODES = {
     'MOD':     0x0F,
     'DEX':     0x18,
     'DEY':     0x19,
+    'TAB':     0x1C,   # Transfer AC to B
+    'TBA':     0x1D,   # Transfer B to AC
     'ADDX':    0x32,
     'SUBX':    0x33,
     'ADDY':    0x34,
     'SUBY':    0x35,
+    'INB':     0x36,   # Increment B
+    'DEB':     0x37,   # Decrement B
+    'SWPB':    0x38,   # Swap AC <-> B
+    'ADDB':    0x39,   # AC = AC + B
+    'SUBB':    0x3A,   # AC = AC - B
     'NOT':     0x60,
     'ASR':     0x61,
     'PUSH':    0x70,
@@ -63,6 +70,7 @@ IMM16_OPCODES = {
     'LDI':  0xE0,
     'LDXI': 0x7C,
     'LDYI': 0x06,
+    'LDBI': 0xE4,   # Load B immediate
 }
 
 # Three-byte instructions (16-bit address operand)
@@ -71,6 +79,8 @@ ADDR16_OPCODES = {
     'LDY':  0x07,
     'STY':  0x08,
     'STA':  0x10,
+    'LDB':  0x1E,   # Load B from memory
+    'STB':  0x1F,   # Store B to memory
     'LDA':  0x20,
     'ADD':  0x30,
     'ADC':  0x31,
@@ -89,6 +99,8 @@ ADDR16_OPCODES = {
     'JGE':  0x85,
     'JBE':  0x86,
     'JA':   0x87,
+    'PUSH_ADDR': 0x89,  # Push MEM[addr] to stack
+    'POP_ADDR':  0x8A,  # Pop from stack to MEM[addr]
     'JN':   0x90,
     'JZ':   0xA0,
     'JNZ':  0xB0,

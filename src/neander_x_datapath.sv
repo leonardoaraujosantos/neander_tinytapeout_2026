@@ -224,6 +224,30 @@ module y_reg (
 endmodule
 
 // ---------------------------------------------------------------------------
+// B Index Register (Load, Increment & Decrement) - 16-bit
+// ---------------------------------------------------------------------------
+module b_reg (
+    input  logic        clk,
+    input  logic        reset,
+    input  logic        b_load,
+    input  logic        b_inc,
+    input  logic        b_dec,
+    input  logic [15:0] data_in,
+    output logic [15:0] b_value
+);
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset)
+            b_value <= 16'h0000;
+        else if (b_load)
+            b_value <= data_in;
+        else if (b_inc)
+            b_value <= b_value + 16'h0001;
+        else if (b_dec)
+            b_value <= b_value - 16'h0001;
+    end
+endmodule
+
+// ---------------------------------------------------------------------------
 // FP Frame Pointer Register - 16-bit for 64KB addressing
 // Supports full 16-bit load (TSF) or from memory (POP_FP)
 // ---------------------------------------------------------------------------
@@ -308,6 +332,12 @@ module neander_datapath (
     input  logic       y_to_ac,   // Transfer Y to AC (TYA)
     input  logic       indexed_mode_y, // Use indexed addressing (addr + Y)
     input  logic       mul_to_y,  // Load Y with high word of multiplication result
+    // B Register Extension signals
+    input  logic       b_load,    // Load B register
+    input  logic       b_inc,     // Increment B register
+    input  logic       b_dec,     // Decrement B register (DEB)
+    input  logic       b_to_ac,   // Transfer B to AC (TBA)
+    input  logic       b_from_temp, // Load B from swap temp (for SWPB)
     // Frame Pointer Extension signals
     input  logic       fp_load,      // Load FP full 16-bit (for TSF)
     input  logic       fp_load_lo,   // Load FP low byte (for POP_FP)
@@ -357,6 +387,7 @@ module neander_datapath (
     output logic [15:0] dbg_sp,     // 16-bit SP for 64KB addressing
     output logic [15:0] dbg_x,      // 16-bit X register debug output
     output logic [15:0] dbg_y,      // 16-bit Y register debug output
+    output logic [15:0] dbg_b,      // 16-bit B register debug output
     output logic [15:0] dbg_fp      // 16-bit FP for 64KB addressing
 );
 
@@ -364,7 +395,7 @@ module neander_datapath (
     // 16-bit registers for 64KB addressing
     logic [15:0] pc, rem, rdm, sp, fp;
     // 16-bit data registers
-    logic [15:0] ac, x, y;
+    logic [15:0] ac, x, y, b;
     logic [7:0] ri;  // Opcode register stays 8-bit
     logic [15:0] swap_temp;  // Temporary register for SWPX/SWPY instructions (16-bit)
     logic [15:0] alu_res;
@@ -385,6 +416,7 @@ module neander_datapath (
     logic [15:0] ac_in;
     logic [15:0] x_in;     // X register input (from AC for TAX, from swap_temp for SWPX, or from memory for LDX)
     logic [15:0] y_in;     // Y register input (from AC for TAY, from swap_temp for SWPY, or from memory for LDY)
+    logic [15:0] b_in;     // B register input (from AC for TAB, from swap_temp for SWPB, or from memory for LDB)
     logic        N_in, Z_in, C_in;
 
     // Indexed address calculation: addr + X or addr + Y or addr + FP
@@ -401,7 +433,7 @@ module neander_datapath (
                        (indexed_mode_y ? (rem + y) :
                         (indexed_mode ? (rem + x) : rem)));
     // Memory data output MUX (16-bit data):
-    // 000=AC, 001=PC, 010=X, 011=Y, 100=FP, 101=reserved, 110=reserved
+    // 000=AC, 001=PC, 010=X, 011=Y, 100=FP, 101=B, 110=swap_temp (for PUSH_ADDR/POP_ADDR)
     always_comb begin
         case (mem_data_sel_ext)
             3'b000:  mem_data_out = ac;        // STA, PUSH
@@ -409,8 +441,8 @@ module neander_datapath (
             3'b010:  mem_data_out = x;         // STX
             3'b011:  mem_data_out = y;         // STY
             3'b100:  mem_data_out = fp;        // PUSH_FP
-            3'b101:  mem_data_out = pc;        // Reserved (same as PC)
-            3'b110:  mem_data_out = fp;        // Reserved (same as FP)
+            3'b101:  mem_data_out = b;         // STB
+            3'b110:  mem_data_out = swap_temp; // PUSH_ADDR/POP_ADDR (value from memory)
             default: mem_data_out = ac;
         endcase
     end
@@ -426,6 +458,7 @@ module neander_datapath (
     assign dbg_sp = sp;
     assign dbg_x  = x;  // X register debug output
     assign dbg_y  = y;  // Y register debug output
+    assign dbg_b  = b;  // B register debug output
     assign dbg_fp = fp; // FP register debug output
 
     // --- Instantiations ---
@@ -468,6 +501,19 @@ module neander_datapath (
     assign y_in = y_from_temp ? swap_temp :
                   mul_to_y ? alu_mul_high :
                   (opcode == 4'h0 && sub_opcode == 4'h3) ? ac : mem_data_in;
+
+    // B Index Register
+    // Input can be from memory (LDB), immediate (LDBI), or AC (TAB)
+    b_reg u_b (
+        .clk(clk), .reset(reset),
+        .b_load(b_load), .b_inc(b_inc), .b_dec(b_dec),
+        .data_in(b_in), .b_value(b)
+    );
+
+    // B register input mux: select between mem_data_in (LDB/LDBI), AC (TAB), or swap_temp (SWPB)
+    // Priority: b_from_temp > TAB (0x1C) > LDB/LDBI
+    assign b_in = b_from_temp ? swap_temp :
+                  (opcode == 4'h1 && sub_opcode == 4'hC) ? ac : mem_data_in;
 
     // FP Frame Pointer Register - 16-bit
     // Input can be from SP (TSF via fp_load) or from memory (POP_FP via fp_load_lo)
@@ -525,13 +571,14 @@ module neander_datapath (
         .data_in(rdm[7:0]), .value(ri)
     );
 
-    // ALU B input MUX: select between mem_data_in (000), constant 1 (001) for INC/DEC, X (010) for MUL/ADDX, Y (011) for ADDY
+    // ALU B input MUX: select between mem_data_in (000), constant 1 (001) for INC/DEC, X (010) for MUL/ADDX, Y (011) for ADDY, B (100) for ADDB/SUBB
     always_comb begin
         case (alu_b_sel)
             3'b000:  alu_b_in = mem_data_in;  // Default: memory data (16-bit)
             3'b001:  alu_b_in = 16'h0001;     // Constant 1 for INC/DEC
             3'b010:  alu_b_in = x;            // X register for MUL, ADDX, SUBX, etc.
             3'b011:  alu_b_in = y;            // Y register for ADDY, SUBY
+            3'b100:  alu_b_in = b;            // B register for ADDB, SUBB
             default: alu_b_in = mem_data_in;
         endcase
     end
@@ -584,6 +631,10 @@ module neander_datapath (
         else if (y_to_ac) begin
             // TYA: Transfer Y to AC
             ac_in = y;
+        end
+        else if (b_to_ac) begin
+            // TBA: Transfer B to AC
+            ac_in = b;
         end
         else if (opcode == 4'h2 || (opcode == 4'hE && sub_opcode == 4'h0)) begin
             // LDA or LDI (0xE0 only - MULI/DIVI/CMPI use ALU result)
