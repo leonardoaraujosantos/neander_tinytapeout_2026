@@ -34,6 +34,10 @@
   "//": "---- Antenna fixes ----",
   "GRT_REPAIR_ANTENNAS": 1,
   "RUN_HEURISTIC_DIODE_INSERTION": 1,
+  "// Insert diodes on input ports (recommended)": "",
+  "DIODE_ON_PORTS": "in",
+  "// Diode/antenna cell (MUST be CELL/PIN)": "",
+  "DIODE_CELL": "sg13g2_antennanp/A",
 
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
