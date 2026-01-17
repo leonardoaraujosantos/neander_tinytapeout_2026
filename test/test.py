@@ -24,6 +24,7 @@ DATA_AREA_START = 0x80
 # Opcodes that take a memory address operand (need expansion from 2 bytes to 3 bytes)
 MEMORY_ADDRESS_OPCODES = {
     0x10, 0x11, 0x12, 0x14,  # STA family (STA, STA_X, STA_Y, STA_FP)
+    0x1E, 0x1F,              # LDB, STB (B register)
     0x20, 0x21, 0x22, 0x24,  # LDA family (LDA, LDA_X, LDA_Y, LDA_FP)
     0x30, 0x31,              # ADD, ADC
     0x40,                    # OR
@@ -34,6 +35,7 @@ MEMORY_ADDRESS_OPCODES = {
     0x7A, 0x7B,              # LDX, STX
     0x07, 0x08,              # LDY, STY
     0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,  # JMP family
+    0x89, 0x8A,              # PUSH_ADDR, POP_ADDR
     0x90,                    # JN
     0xA0,                    # JZ
     0xB0,                    # JNZ
@@ -54,6 +56,7 @@ IMMEDIATE_16BIT_OPCODES = {
     0xE0,  # LDI (16-bit immediate)
     0x7C,  # LDXI (16-bit immediate)
     0x06,  # LDYI (16-bit immediate)
+    0xE4,  # LDBI (16-bit immediate for B register)
 }
 
 # Opcodes that take an 8-bit immediate/port (2 bytes - opcode + byte)
@@ -4218,3 +4221,237 @@ async def test_sta_fp_indexed(dut):
 
     assert io_detected, "No IO write detected"
     dut._log.info("Test PASSED: STA,FP indexed works")
+
+
+# =============================================================================
+# B Register Extension Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_ldbi_tba(dut):
+    """Test LDBI and TBA: Load B with immediate, transfer to AC."""
+    dut._log.info("Test: LDBI 0x42, TBA, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program: LDBI 0x42, TBA, OUT 0, HLT
+    program = [
+        0xE4, 0x42,  # LDBI 0x42
+        0x1D,        # TBA (AC = B)
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDBI and TBA work")
+
+
+@cocotb.test()
+async def test_tab_transfer(dut):
+    """Test TAB: Transfer AC to B."""
+    dut._log.info("Test: LDI 0x55, TAB, LDI 0, TBA, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program: LDI 0x55, TAB, LDI 0, TBA, OUT 0, HLT
+    program = [
+        0xE0, 0x55,  # LDI 0x55
+        0x1C,        # TAB (B = AC)
+        0xE0, 0x00,  # LDI 0
+        0x1D,        # TBA (AC = B)
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: TAB transfer works")
+
+
+@cocotb.test()
+async def test_inb_deb(dut):
+    """Test INB and DEB: Increment and Decrement B."""
+    dut._log.info("Test: LDBI 10, INB, INB, TBA, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program: LDBI 10, INB, INB, TBA, OUT 0, HLT
+    # Expected: B = 10 + 1 + 1 = 12
+    program = [
+        0xE4, 0x0A,  # LDBI 10
+        0x36,        # INB (B = 11)
+        0x36,        # INB (B = 12)
+        0x1D,        # TBA (AC = B = 12)
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: INB works")
+
+
+@cocotb.test()
+async def test_addb_subb(dut):
+    """Test ADDB and SUBB: Add/Subtract B from AC."""
+    dut._log.info("Test: LDBI 50, LDI 100, ADDB, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program: LDBI 50, LDI 100, ADDB, OUT 0, HLT
+    # Expected: AC = 100 + 50 = 150
+    program = [
+        0xE4, 0x32,  # LDBI 50
+        0xE0, 0x64,  # LDI 100
+        0x39,        # ADDB (AC = 100 + 50 = 150)
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: ADDB works")
+
+
+@cocotb.test()
+async def test_swpb(dut):
+    """Test SWPB: Swap AC and B."""
+    dut._log.info("Test: LDBI 0xAA, LDI 0x55, SWPB, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program: LDBI 0xAA, LDI 0x55, SWPB, OUT 0, HLT
+    # After SWPB: AC = 0xAA (was B), B = 0x55 (was AC)
+    program = [
+        0xE4, 0xAA,  # LDBI 0xAA
+        0xE0, 0x55,  # LDI 0x55
+        0x38,        # SWPB (swap: AC = 0xAA, B = 0x55)
+        0xD0, 0x00,  # OUT 0 (outputs 0xAA)
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(5000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: SWPB works")
+
+
+@cocotb.test()
+async def test_ldb_stb(dut):
+    """Test LDB and STB: Load/Store B from/to memory."""
+    dut._log.info("Test: LDBI 0x12, STB, LDBI 0, LDB, TBA, OUT")
+
+    tb = NeanderTB(dut)
+
+    # Program: LDBI 0x12, STB 0x80, LDBI 0, LDB 0x80, TBA, OUT 0, HLT
+    program = [
+        0xE4, 0x12,  # LDBI 0x12
+        0x1F, 0x80,  # STB 0x80
+        0xE4, 0x00,  # LDBI 0
+        0x1E, 0x80,  # LDB 0x80
+        0x1D,        # TBA
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(6000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: LDB/STB work")
+
+
+# =============================================================================
+# PUSH_ADDR and POP_ADDR Tests
+# =============================================================================
+
+@cocotb.test()
+async def test_push_addr_pop_addr(dut):
+    """Test PUSH_ADDR and POP_ADDR: Push/Pop memory to/from stack."""
+    dut._log.info("Test: PUSH_ADDR, POP_ADDR round trip")
+
+    tb = NeanderTB(dut)
+
+    # First, store a value at 0x80, push it to stack, pop to 0x82, load from 0x82
+    program = [
+        0xE0, 0xAB,  # LDI 0xAB
+        0x10, 0x80,  # STA 0x80
+        0x89, 0x80,  # PUSH_ADDR 0x80 (push MEM[0x80] to stack)
+        0x8A, 0x82,  # POP_ADDR 0x82 (pop to MEM[0x82])
+        0x20, 0x82,  # LDA 0x82
+        0xD0, 0x00,  # OUT 0
+        0xF0,        # HLT
+    ]
+    tb.load_program(program)
+
+    await tb.setup()
+
+    io_detected = False
+    for cycle in range(8000):
+        await RisingEdge(dut.clk)
+        if tb.get_io_write():
+            dut._log.info(f"IO Write detected at cycle {cycle}")
+            io_detected = True
+            break
+
+    assert io_detected, "No IO write detected"
+    dut._log.info("Test PASSED: PUSH_ADDR/POP_ADDR work")
+
