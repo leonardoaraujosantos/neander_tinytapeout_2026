@@ -33,7 +33,7 @@
 
   "//": "---- Antenna fixes ----",
   "GRT_REPAIR_ANTENNAS": 1,
-  "RUN_HEURISTIC_DIODE_INSERTION": 1,
+  "RUN_HEURISTIC_DIODE_INSERTION": 0,
   "// Insert diodes on input ports (recommended)": "",
   "DIODE_ON_PORTS": "in",
   "// Diode/antenna cell (MUST be CELL/PIN)": "",
