@@ -31,8 +31,10 @@
   "//": "https://tinytapeout.com/faq/#how-can-i-map-an-additional-external-clock-to-one-of-the-gpios",
   "CLOCK_PORT": "clk",
 
-  "//": "ANTENNA FIX (insert diode cells automatically)",
-  "DIODE_CELL": "sky130_fd_sc_hd__diode_2/DIODE",
+  "//": "---- Antenna fixes ----",
+  "GRT_REPAIR_ANTENNAS": 1,
+  "RUN_HEURISTIC_DIODE_INSERTION": 1,
+
 
   "//": "Configuration docs: https://librelane.readthedocs.io/en/latest/reference/configuration.html",
 
