@@ -139,80 +139,54 @@ Interface neanderxIR = {
 
 ## VREG Implementation
 
-LCC uses Virtual Registers (VREGs) as an abstraction for computation. On the NEANDER-X accumulator architecture, VREGs are mapped to dedicated memory slots.
+LCC uses Virtual Registers (VREGs) as an abstraction for computation. On the NEANDER-X accumulator architecture, VREGs are allocated on the stack as part of the function's local variables via the `local()` function.
 
-### VREG-to-Memory-Slot Mapping
+### Stack-Based VREG Allocation (Correct Approach)
 
-Each unique VREG Symbol pointer is assigned a unique memory slot:
+VREGs are allocated on the stack through LCC's standard `local()` function, which assigns them negative offsets from FP:
 
 ```c
-/* VREG-to-slot mapping for spill/reload */
-#define MAX_VREG_SLOTS 32
-static Symbol vreg_symbols[MAX_VREG_SLOTS];
-static int next_vreg_slot;
-
-/* Get or allocate a memory slot for a VREG symbol */
-static int get_vreg_slot(Symbol reg) {
-    int i;
-    /* Look for existing mapping */
-    for (i = 0; i < next_vreg_slot; i++) {
-        if (vreg_symbols[i] == reg) {
-            return i;
-        }
-    }
-    /* Allocate new slot */
-    if (next_vreg_slot < MAX_VREG_SLOTS) {
-        vreg_symbols[next_vreg_slot] = reg;
-        return next_vreg_slot++;
-    }
-    return 0;
+static void local(Symbol p) {
+    /* Ensure 2-byte alignment for 16-bit architecture */
+    offset = roundup(offset + p->type->size, p->type->align < 2 ? 2 : p->type->align);
+    p->x.offset = -offset;
+    p->x.name = stringf("%d", -offset);  /* e.g., "-2", "-4", "-6" */
 }
 ```
 
-### VREG Memory Declaration
-
-At program end, VREG memory slots are declared:
-
-```asm
-_vreg0:   .word 0     ; VREG spill slot 0
-_vreg1:   .word 0     ; VREG spill slot 1
-_vreg2:   .word 0     ; VREG spill slot 2
-...
-```
+This means VREGs live on the stack alongside other local variables, accessed via FP-relative addressing (e.g., `LDA -2,FP`).
 
 ### emit2 Callback for VREG Operations
 
-The `emit2` function handles VREG read/write and binary operations:
+The `emit2` function handles VREG read/write using the symbol's `x.name` field (the offset set by `local()`):
 
 ```c
 static void emit2(Node p) {
     int op = specific(p->op);
     Symbol reg, reg1, reg2;
-    int slot, slot1, slot2;
     Node left, right;
 
     switch (op) {
     case ASGN+I:
     case ASGN+U:
     case ASGN+P:
-        /* Write to VREG - store to dedicated memory slot */
+        /* Write to VREG - store using FP-relative offset from local() */
         if (LEFT_CHILD(p) && LEFT_CHILD(p)->op == VREG+P) {
             reg = LEFT_CHILD(p)->syms[0];
-            if (reg) {
-                slot = get_vreg_slot(reg);
-                print("    STA _vreg%d\n", slot);
+            if (reg && reg->x.name) {
+                /* Use the symbol's offset set by local() */
+                print("    STA %s,FP\n", reg->x.name);  /* e.g., "STA -2,FP" */
             }
         }
         break;
     case INDIR+I:
     case INDIR+U:
     case INDIR+P:
-        /* Read from VREG - load from dedicated memory slot */
+        /* Read from VREG - load using FP-relative offset from local() */
         if (LEFT_CHILD(p) && LEFT_CHILD(p)->op == VREG+P) {
             reg = LEFT_CHILD(p)->syms[0];
-            if (reg) {
-                slot = get_vreg_slot(reg);
-                print("    LDA _vreg%d\n", slot);
+            if (reg && reg->x.name) {
+                print("    LDA %s,FP\n", reg->x.name);  /* e.g., "LDA -2,FP" */
             }
         }
         break;
@@ -229,12 +203,12 @@ static void emit2(Node p) {
             LEFT_CHILD(right)->op == VREG+P) {
             reg1 = LEFT_CHILD(left)->syms[0];
             reg2 = LEFT_CHILD(right)->syms[0];
-            slot1 = get_vreg_slot(reg1);
-            slot2 = get_vreg_slot(reg2);
-            print("    LDA _vreg%d\n", slot1);
-            print("    STA _tmp\n");
-            print("    LDA _vreg%d\n", slot2);
-            print("    ADD _tmp\n");
+            if (reg1 && reg1->x.name && reg2 && reg2->x.name) {
+                print("    LDA %s,FP\n", reg1->x.name);
+                print("    STA _tmp\n");
+                print("    LDA %s,FP\n", reg2->x.name);
+                print("    ADD _tmp\n");
+            }
         }
         break;
     case MUL+I:
@@ -249,17 +223,27 @@ static void emit2(Node p) {
             LEFT_CHILD(right)->op == VREG+P) {
             reg1 = LEFT_CHILD(left)->syms[0];
             reg2 = LEFT_CHILD(right)->syms[0];
-            slot1 = get_vreg_slot(reg1);
-            slot2 = get_vreg_slot(reg2);
-            print("    LDA _vreg%d\n", slot2);
-            print("    TAX\n");
-            print("    LDA _vreg%d\n", slot1);
-            print("    MUL\n");
+            if (reg1 && reg1->x.name && reg2 && reg2->x.name) {
+                print("    LDA %s,FP\n", reg2->x.name);
+                print("    TAX\n");
+                print("    LDA %s,FP\n", reg1->x.name);
+                print("    MUL\n");
+            }
         }
         break;
     }
 }
 ```
+
+### Why Stack-Based VREGs Matter
+
+**Critical**: Using stack-based VREGs (via `local()`) instead of global memory slots is essential for:
+
+1. **Recursion**: Each function invocation gets its own stack frame with unique VREG storage
+2. **Reentrancy**: Functions can be called from interrupts without corrupting state
+3. **Correctness**: Prevents VREG values from being overwritten by nested calls
+
+**Common Bug**: Using hardcoded global offsets for VREGs (like `_vreg0`, `_vreg1`) causes recursive functions like Fibonacci to fail because all invocations share the same memory locations.
 
 ## lburg Grammar Rules
 
@@ -439,25 +423,21 @@ _main:
     ; Prologue
     PUSH_FP
     TSF
-    ; Allocate 4 bytes for locals
+    ; Allocate 4 bytes for locals (x at -2, y at -4)
     LDI 0
     PUSH
     LDI 0
     PUSH
-    LDI 0
-    PUSH
-    LDI 0
-    PUSH
-    ; x = 100
+    ; x = 100 (stored at FP-2)
     LDI 100
-    STA _vreg0
-    ; y = 200
+    STA -2,FP
+    ; y = 200 (stored at FP-4)
     LDI 200
-    STA _vreg1
+    STA -4,FP
     ; return x + y
-    LDA _vreg0
+    LDA -2,FP
     STA _tmp
-    LDA _vreg1
+    LDA -4,FP
     ADD _tmp
 ; ret - value in AC
     ; Epilogue
@@ -466,13 +446,18 @@ _main:
     RET
 ```
 
-### Factorial (Recursive)
+### Factorial (Iterative)
 
 C code:
 ```c
 int factorial(int n) {
-    if (n <= 1) return 1;
-    return n * factorial(n - 1);
+    int result = 1;
+    int i = 1;
+    while (i <= n) {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
 }
 ```
 
@@ -483,41 +468,45 @@ _factorial:
     ; Prologue
     PUSH_FP
     TSF
-    ; Allocate locals for temporaries
+    ; Allocate 6 bytes for locals
+    ; result at -2, i at -4, temp at -6
     LDI 0
     PUSH
-    ...
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
     ; result = 1
     LDI 1
-    STA _vreg0
+    STA -4,FP
     ; i = 1
     LDI 1
-    STA _vreg1
+    STA -2,FP
     JMP _L3
 _L2:
     ; result = result * i
-    LDA _vreg1
+    LDA -2,FP
     TAX
-    LDA _vreg0
+    LDA -4,FP
     MUL
-    STA _vreg0
+    STA -4,FP
     ; i = i + 1
-    LDA _vreg1
+    LDA -2,FP
     STA _tmp
     LDI 1
     ADD _tmp
-    STA _vreg1
+    STA -2,FP
 _L3:
     ; if (i <= n) goto L2
-    LDA _vreg1
+    LDA -2,FP
     STA _tmp2
-    LDA 4,FP
+    LDA 4,FP      ; n is parameter at FP+4
     STA _tmp
     LDA _tmp2
     CMP _tmp
     JLE _L2
     ; return result
-    LDA _vreg0
+    LDA -4,FP
 ; ret - value in AC
 _L1:
     ; Epilogue
@@ -525,6 +514,8 @@ _L1:
     POP_FP
     RET
 ```
+
+**Note:** The stack-based approach is essential for recursion. Each call to `factorial` gets its own stack frame with its own `result` and `i` variables.
 
 ## Runtime Variables
 
@@ -537,14 +528,12 @@ _tmp_hi:  .word 0     ; For 32-bit ops (high word)
 _tmp2:    .word 0     ; Second 16-bit temp
 _tmp2_hi: .word 0     ; For 32-bit ops (high word)
 _mask_ff: .word 0x00FF ; Mask for 8-bit values
-_vreg0:   .word 0     ; VREG spill slot 0
-_vreg1:   .word 0     ; VREG spill slot 1
-...
-_vreg15:  .word 0     ; VREG spill slot 15
 
 ; End of program
     HLT
 ```
+
+**Note:** VREGs are NOT stored in global memory slots. They are allocated on the stack via `local()` and accessed using FP-relative addressing (e.g., `LDA -2,FP`). This enables recursion to work correctly.
 
 ## Building and Using
 
@@ -569,17 +558,70 @@ make TARGET=neanderx
 
 ### Testing
 
-The backend includes comprehensive tests in `cocotb_tests/test_lcc_samples.py`:
+The backend includes comprehensive tests in `cocotb_tests/test_lcc_samples.py`. See the Test Results section below for the full list.
 
-| Test | Description | Expected Result |
-|------|-------------|-----------------|
-| 01_hello | Return constant | 42 |
-| 02_locals | Local variable addition | 300 |
-| 03_arithmetic | Multiple operations | 100 |
-| 04_globals | Global variable operations | 15 |
-| 05_loop | Loop summation sum_to_n(10) | 55 |
-| 06_array | Array sum | 150 |
-| 07_factorial | factorial(5) | 120 |
+## Critical Pitfalls and Solutions
+
+### VREG Memory Slot Overlap
+
+**Problem:** VREGs and local variables overlap in memory, causing wrong results.
+
+**Symptoms:**
+- Recursive functions fail (Fibonacci, factorial)
+- Values mysteriously get overwritten
+- Works for simple functions but fails for complex ones
+
+**Root Cause:** The `emit2()` function uses hardcoded VREG offsets (e.g., `VREG_OFFSET(slot)`) while `local()` allocates variables at different offsets. These can overlap.
+
+**Solution:** Use `reg->x.name` in `emit2()` which contains the offset already set by `local()`:
+
+```c
+/* CORRECT */
+print("    STA %s,FP\n", reg->x.name);  /* Uses local()'s offset */
+
+/* WRONG */
+print("    STA %d,FP\n", VREG_OFFSET(slot));  /* Hardcoded offset */
+```
+
+### Stack Allocation in 16-bit Mode
+
+**Problem:** Stack allocation loop allocates double the needed space.
+
+**Symptoms:**
+- Recursive functions timeout
+- Stack corruption
+- Fibonacci test fails
+
+**Root Cause:** The allocation loop runs once per byte, but PUSH is a 16-bit operation:
+
+```c
+/* WRONG - allocates 2x the needed space */
+for (i = 0; i < maxoffset; i++) {
+    print("    PUSH\n");  /* Each PUSH is 2 bytes */
+}
+
+/* CORRECT - step by word size */
+for (i = 0; i < maxoffset; i += 2) {
+    print("    PUSH\n");
+}
+```
+
+## Test Results
+
+All 10 LCC test programs pass:
+
+| Test | Description | Expected | Result |
+|------|-------------|----------|--------|
+| 01_hello | Return constant | 42 | PASS |
+| 02_locals | Local variables | 300 | PASS |
+| 03_arithmetic | Function calls | 100 | PASS |
+| 04_globals | Global variables | 15 | PASS |
+| 05_loop | While loop | 55 | PASS |
+| 06_array | Array access | 150 | PASS |
+| 07_factorial | factorial(5) | 120 | PASS |
+| 08_fibonacci | fib(10) recursive | 55 | PASS |
+| 09_bitwise | AND/OR/XOR ops | 8190 | PASS |
+| 10_char | Char operations | 145 | PASS |
 
 ## Limitations
 
@@ -593,3 +635,4 @@ The backend includes comprehensive tests in `cocotb_tests/test_lcc_samples.py`:
 - [LCC Compiler Documentation](https://drh.github.io/lcc/)
 - [NEANDER-X Instruction Set](../README.md)
 - [LCC Backend Tutorial](LCC_COMPILER_COMPLETE.md)
+- [LCC Porting Guide](PORTING_NEANDER.md) - Comprehensive tutorial with detailed pitfalls section

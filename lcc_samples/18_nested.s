@@ -4,52 +4,42 @@
 ; Code starts at 0x0000
     .org 0x0000
 
-    .global _to_upper
+    .global _double_val
 
     .text
 
-; Function: to_upper
-_to_upper:
+; Function: double_val
+_double_val:
     ; Prologue
     PUSH_FP
     TSF
     ; Allocate 2 bytes for locals
     LDI 0
     PUSH
-    LDA 4,FP
-    STA 4,FP
-    LDA 4,FP
-; cvui2 - already 16-bit
     STA -2,FP
     LDA -2,FP
-    STA _tmp2
-    LDI 97
     STA _tmp
-    LDA _tmp2
-    CMP _tmp
-    JN _L2
     LDA -2,FP
-    STA _tmp2
-    LDI 122
-    STA _tmp
-    LDA _tmp2
-    CMP _tmp
-    JGT _L2
-    LDA 4,FP
-; cvui2 - already 16-bit
-    STA _tmp2
-    LDI 32
-    STA _tmp
-    LDA _tmp2
-    SUB _tmp
-; cvui2 - already 16-bit
-; ret - value in AC
-    JMP _L1
-_L2:
-    LDA 4,FP
-; cvui2 - already 16-bit
+    ADD _tmp
 ; ret - value in AC
 _L1:
+    ; Epilogue
+    TFS
+    POP_FP
+    RET
+    .global _add_ten
+
+; Function: add_ten
+_add_ten:
+    ; Prologue
+    PUSH_FP
+    TSF
+    LDA 4,FP
+    STA _tmp
+    LDI 10
+    ADD _tmp
+; ret - value in AC
+_L2:
     ; Epilogue
     TFS
     POP_FP
@@ -61,7 +51,7 @@ _main:
     ; Prologue
     PUSH_FP
     TSF
-    ; Allocate 12 bytes for locals
+    ; Allocate 24 bytes for locals
     LDI 0
     PUSH
     LDI 0
@@ -74,28 +64,60 @@ _main:
     PUSH
     LDI 0
     PUSH
-    LDI 104
-    STA -2,FP
-    LDI 105
-    STA -4,FP
-    LDA -2,FP
-; cvui2 - already 16-bit
+    LDI 0
     PUSH
-    CALL _to_upper
-    STA -10,FP
-    STA -6,FP
-    LDA -4,FP
-; cvui2 - already 16-bit
+    LDI 0
     PUSH
-    CALL _to_upper
-    STA -12,FP
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 5
+    PUSH
+    CALL _double_val
     STA -8,FP
-    LDA -6,FP
+    PUSH
+    CALL _double_val
+    STA -10,FP
+    PUSH
+    CALL _add_ten
+    STA -12,FP
+    STA -2,FP
+    LDI 5
+    PUSH
+    CALL _add_ten
+    STA -14,FP
+    PUSH
+    CALL _double_val
+    STA -16,FP
+    PUSH
+    CALL _double_val
+    STA -18,FP
+    STA -4,FP
+    LDI 0
+    PUSH
+    CALL _add_ten
+    STA -20,FP
+    PUSH
+    CALL _add_ten
+    STA -22,FP
+    PUSH
+    CALL _add_ten
+    STA -24,FP
+    STA -6,FP
+    LDA -2,FP
     STA _tmp
-    LDA -8,FP
+    LDA -4,FP
+    ADD _tmp
+    STA _tmp
+    LDA -6,FP
     ADD _tmp
 ; ret - value in AC
-_L4:
+_L3:
     ; Epilogue
     TFS
     POP_FP

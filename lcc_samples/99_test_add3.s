@@ -13,7 +13,26 @@ _main:
     ; Prologue
     PUSH_FP
     TSF
-    LDI 42
+    ; Allocate 6 bytes for locals
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 15
+    STA -2,FP
+    LDI 4095
+    STA -4,FP
+    LDI 4080
+    STA -6,FP
+    LDA -2,FP
+    STA _tmp
+    LDA -4,FP
+    ADD _tmp
+    STA _tmp
+    LDA -6,FP
+    ADD _tmp
 ; ret - value in AC
 _L1:
     ; Epilogue

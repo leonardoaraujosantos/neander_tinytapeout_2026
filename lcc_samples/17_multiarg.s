@@ -4,12 +4,12 @@
 ; Code starts at 0x0000
     .org 0x0000
 
-    .global _add
+    .global _add3
 
     .text
 
-; Function: add
-_add:
+; Function: add3
+_add3:
     ; Prologue
     PUSH_FP
     TSF
@@ -17,25 +17,60 @@ _add:
     STA _tmp
     LDA 6,FP
     ADD _tmp
+    STA _tmp
+    LDA 8,FP
+    ADD _tmp
 ; ret - value in AC
 _L1:
     ; Epilogue
     TFS
     POP_FP
     RET
-    .global _sub
+    .global _add4
 
-; Function: sub
-_sub:
+; Function: add4
+_add4:
     ; Prologue
     PUSH_FP
     TSF
-    LDA 6,FP
-    STA _tmp
     LDA 4,FP
-    SUB _tmp
+    STA _tmp
+    LDA 6,FP
+    ADD _tmp
+    STA _tmp
+    LDA 8,FP
+    ADD _tmp
+    STA _tmp
+    LDA 10,FP
+    ADD _tmp
 ; ret - value in AC
 _L2:
+    ; Epilogue
+    TFS
+    POP_FP
+    RET
+    .global _add5
+
+; Function: add5
+_add5:
+    ; Prologue
+    PUSH_FP
+    TSF
+    LDA 4,FP
+    STA _tmp
+    LDA 6,FP
+    ADD _tmp
+    STA _tmp
+    LDA 8,FP
+    ADD _tmp
+    STA _tmp
+    LDA 10,FP
+    ADD _tmp
+    STA _tmp
+    LDA 12,FP
+    ADD _tmp
+; ret - value in AC
+_L3:
     ; Epilogue
     TFS
     POP_FP
@@ -47,7 +82,7 @@ _main:
     ; Prologue
     PUSH_FP
     TSF
-    ; Allocate 12 bytes for locals
+    ; Allocate 14 bytes for locals
     LDI 0
     PUSH
     LDI 0
@@ -60,30 +95,52 @@ _main:
     PUSH
     LDI 0
     PUSH
-    LDI 50
-    STA -2,FP
+    LDI 0
+    PUSH
     LDI 30
-    STA -4,FP
-    LDA -4,FP
     PUSH
-    LDA -2,FP
+    LDI 20
     PUSH
-    CALL _add
-    STA -10,FP
-    STA -6,FP
-    LDA -4,FP
+    LDI 10
     PUSH
-    LDA -2,FP
-    PUSH
-    CALL _sub
-    STA -12,FP
+    CALL _add3
     STA -8,FP
-    LDA -6,FP
+    STA -2,FP
+    LDI 4
+    PUSH
+    LDI 3
+    PUSH
+    LDI 2
+    PUSH
+    LDI 1
+    PUSH
+    CALL _add4
+    STA -10,FP
+    STA -4,FP
+    LDI 10
+    STA -12,FP
+    LDA -12,FP
+    PUSH
+    LDA -12,FP
+    PUSH
+    LDI 30
+    PUSH
+    LDI 20
+    PUSH
+    LDA -12,FP
+    PUSH
+    CALL _add5
+    STA -14,FP
+    STA -6,FP
+    LDA -2,FP
     STA _tmp
-    LDA -8,FP
+    LDA -4,FP
+    ADD _tmp
+    STA _tmp
+    LDA -6,FP
     ADD _tmp
 ; ret - value in AC
-_L3:
+_L4:
     ; Epilogue
     TFS
     POP_FP

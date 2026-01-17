@@ -4,52 +4,46 @@
 ; Code starts at 0x0000
     .org 0x0000
 
-    .global _to_upper
+    .global _func1
 
     .text
 
-; Function: to_upper
-_to_upper:
+; Function: func1
+_func1:
     ; Prologue
     PUSH_FP
     TSF
-    ; Allocate 2 bytes for locals
-    LDI 0
-    PUSH
-    LDA 4,FP
-    STA 4,FP
-    LDA 4,FP
-; cvui2 - already 16-bit
-    STA -2,FP
-    LDA -2,FP
-    STA _tmp2
-    LDI 97
-    STA _tmp
-    LDA _tmp2
-    CMP _tmp
-    JN _L2
-    LDA -2,FP
-    STA _tmp2
-    LDI 122
-    STA _tmp
-    LDA _tmp2
-    CMP _tmp
-    JGT _L2
-    LDA 4,FP
-; cvui2 - already 16-bit
-    STA _tmp2
-    LDI 32
-    STA _tmp
-    LDA _tmp2
-    SUB _tmp
-; cvui2 - already 16-bit
-; ret - value in AC
-    JMP _L1
-_L2:
-    LDA 4,FP
-; cvui2 - already 16-bit
+    LDI 15
 ; ret - value in AC
 _L1:
+    ; Epilogue
+    TFS
+    POP_FP
+    RET
+    .global _func2
+
+; Function: func2
+_func2:
+    ; Prologue
+    PUSH_FP
+    TSF
+    LDI 4095
+; ret - value in AC
+_L2:
+    ; Epilogue
+    TFS
+    POP_FP
+    RET
+    .global _func3
+
+; Function: func3
+_func3:
+    ; Prologue
+    PUSH_FP
+    TSF
+    LDI 4080
+; ret - value in AC
+_L3:
     ; Epilogue
     TFS
     POP_FP
@@ -61,7 +55,7 @@ _main:
     ; Prologue
     PUSH_FP
     TSF
-    ; Allocate 12 bytes for locals
+    ; Allocate 16 bytes for locals
     LDI 0
     PUSH
     LDI 0
@@ -74,25 +68,41 @@ _main:
     PUSH
     LDI 0
     PUSH
-    LDI 104
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 255
     STA -2,FP
-    LDI 105
+    LDI 3855
     STA -4,FP
-    LDA -2,FP
-; cvui2 - already 16-bit
+    LDA -4,FP
     PUSH
-    CALL _to_upper
-    STA -10,FP
+    LDA -2,FP
+    PUSH
+    CALL _func1
+    STA -12,FP
     STA -6,FP
     LDA -4,FP
-; cvui2 - already 16-bit
     PUSH
-    CALL _to_upper
-    STA -12,FP
+    LDA -2,FP
+    PUSH
+    CALL _func2
+    STA -14,FP
     STA -8,FP
+    LDA -4,FP
+    PUSH
+    LDA -2,FP
+    PUSH
+    CALL _func3
+    STA -16,FP
+    STA -10,FP
     LDA -6,FP
     STA _tmp
     LDA -8,FP
+    ADD _tmp
+    STA _tmp
+    LDA -10,FP
     ADD _tmp
 ; ret - value in AC
 _L4:

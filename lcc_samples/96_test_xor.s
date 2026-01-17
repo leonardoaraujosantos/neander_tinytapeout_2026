@@ -4,18 +4,55 @@
 ; Code starts at 0x0000
     .org 0x0000
 
-    .global _main
+    .global _xor_op
 
     .text
+
+; Function: xor_op
+_xor_op:
+    ; Prologue
+    PUSH_FP
+    TSF
+    LDA 6,FP
+    STA _tmp
+    LDA 4,FP
+    XOR _tmp
+; ret - value in AC
+_L1:
+    ; Epilogue
+    TFS
+    POP_FP
+    RET
+    .global _main
 
 ; Function: main
 _main:
     ; Prologue
     PUSH_FP
     TSF
-    LDI 42
+    ; Allocate 8 bytes for locals
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 0
+    PUSH
+    LDI 255
+    STA -2,FP
+    LDI 3855
+    STA -4,FP
+    LDA -4,FP
+    PUSH
+    LDA -2,FP
+    PUSH
+    CALL _xor_op
+    STA -8,FP
+    STA -6,FP
+    LDA -6,FP
 ; ret - value in AC
-_L1:
+_L2:
     ; Epilogue
     TFS
     POP_FP

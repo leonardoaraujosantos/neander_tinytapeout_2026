@@ -4,52 +4,38 @@
 ; Code starts at 0x0000
     .org 0x0000
 
-    .global _to_upper
+    .global _and_op
 
     .text
 
-; Function: to_upper
-_to_upper:
+; Function: and_op
+_and_op:
     ; Prologue
     PUSH_FP
     TSF
-    ; Allocate 2 bytes for locals
-    LDI 0
-    PUSH
-    LDA 4,FP
-    STA 4,FP
-    LDA 4,FP
-; cvui2 - already 16-bit
-    STA -2,FP
-    LDA -2,FP
-    STA _tmp2
-    LDI 97
+    LDA 6,FP
     STA _tmp
-    LDA _tmp2
-    CMP _tmp
-    JN _L2
-    LDA -2,FP
-    STA _tmp2
-    LDI 122
-    STA _tmp
-    LDA _tmp2
-    CMP _tmp
-    JGT _L2
     LDA 4,FP
-; cvui2 - already 16-bit
-    STA _tmp2
-    LDI 32
-    STA _tmp
-    LDA _tmp2
-    SUB _tmp
-; cvui2 - already 16-bit
-; ret - value in AC
-    JMP _L1
-_L2:
-    LDA 4,FP
-; cvui2 - already 16-bit
+    AND _tmp
 ; ret - value in AC
 _L1:
+    ; Epilogue
+    TFS
+    POP_FP
+    RET
+    .global _or_op
+
+; Function: or_op
+_or_op:
+    ; Prologue
+    PUSH_FP
+    TSF
+    LDA 6,FP
+    STA _tmp
+    LDA 4,FP
+    OR _tmp
+; ret - value in AC
+_L2:
     ; Epilogue
     TFS
     POP_FP
@@ -74,20 +60,22 @@ _main:
     PUSH
     LDI 0
     PUSH
-    LDI 104
+    LDI 255
     STA -2,FP
-    LDI 105
+    LDI 3855
     STA -4,FP
-    LDA -2,FP
-; cvui2 - already 16-bit
+    LDA -4,FP
     PUSH
-    CALL _to_upper
+    LDA -2,FP
+    PUSH
+    CALL _and_op
     STA -10,FP
     STA -6,FP
     LDA -4,FP
-; cvui2 - already 16-bit
     PUSH
-    CALL _to_upper
+    LDA -2,FP
+    PUSH
+    CALL _or_op
     STA -12,FP
     STA -8,FP
     LDA -6,FP
@@ -95,7 +83,7 @@ _main:
     LDA -8,FP
     ADD _tmp
 ; ret - value in AC
-_L4:
+_L3:
     ; Epilogue
     TFS
     POP_FP
