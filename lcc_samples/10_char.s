@@ -140,11 +140,8 @@ _main:
     STA _vreg1
     STA -8,FP
     LDA -6,FP
-; cvui2 - already 16-bit
-    LDA -8,FP
-; cvui2 - already 16-bit
     STA _tmp
-    POP
+    LDA -8,FP
     ADD _tmp
 ; ret - value in AC
 _L4:
