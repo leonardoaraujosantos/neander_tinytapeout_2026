@@ -17,3 +17,5 @@ cocotb_tests/results.xml
 cocotb_tests_lcc/__pycache__/
 cocotb_tests_lcc/sim_build/
 cocotb_tests_lcc/results.xml
+tt/
+.venv_tt/
