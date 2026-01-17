@@ -81,6 +81,7 @@ module tt_um_cpu_leonardoaraujosantos (
   wire [15:0] dbg_x;    // 16-bit X
   wire [15:0] dbg_y;    // 16-bit Y
   wire [15:0] dbg_fp;
+  wire [15:0] dbg_b;    // 16-bit B register
 
   // ============================================================================
   // CPU Instantiation
@@ -111,7 +112,8 @@ module tt_um_cpu_leonardoaraujosantos (
     .dbg_sp(dbg_sp),
     .dbg_x(dbg_x),
     .dbg_y(dbg_y),
-    .dbg_fp(dbg_fp)
+    .dbg_fp(dbg_fp),
+    .dbg_b(dbg_b)
   );
 
   // ============================================================================
@@ -157,6 +159,6 @@ module tt_um_cpu_leonardoaraujosantos (
   assign uio_out = dbg_pc[7:0];          // Debug: PC low byte (for 16-bit PC)
 
   // List all unused inputs to prevent warnings
-  wire _unused = &{ena, io_out_internal, dbg_ac[15:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_pc[15:8], 1'b0};
+  wire _unused = &{ena, uio_in, io_out_internal, dbg_ac[15:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_b, dbg_pc[15:8], 1'b0};
 
 endmodule

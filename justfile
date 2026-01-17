@@ -213,3 +213,240 @@ watch:
     @echo "Watching for changes in {{SAMPLES_DIR}}/*.c"
     @echo "Press Ctrl+C to stop"
     ls {{SAMPLES_DIR}}/*.c | entr -c just compile
+
+# ============================================================================
+# GDS Hardening (TinyTapeout / LibreLane for IHP SG13G2)
+# ============================================================================
+
+# Configuration for IHP hardening
+TT_TOOLS_REPO := "https://github.com/TinyTapeout/tt-support-tools.git"
+TT_TOOLS_DIR := "tt"
+TT_VENV_DIR := ".venv_tt"
+LIBRELANE_VERSION := "3.0.0.dev44"
+
+# Setup TinyTapeout tools and environment
+setup-tt:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Setting up TinyTapeout tools..."
+
+    # Check for system dependencies on macOS
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if ! brew list cairo &>/dev/null; then
+            echo "Installing cairo via Homebrew (required for PNG rendering)..."
+            brew install cairo
+        fi
+        if ! brew list pkg-config &>/dev/null; then
+            echo "Installing pkg-config via Homebrew..."
+            brew install pkg-config
+        fi
+    fi
+
+    # Clone tt-support-tools if not present
+    if [ ! -d "{{TT_TOOLS_DIR}}" ]; then
+        echo "Cloning tt-support-tools..."
+        git clone {{TT_TOOLS_REPO}} {{TT_TOOLS_DIR}}
+    else
+        echo "tt-support-tools already present, updating..."
+        cd {{TT_TOOLS_DIR}} && git pull && cd ..
+    fi
+
+    # Create virtual environment if not present
+    if [ ! -d "{{TT_VENV_DIR}}" ]; then
+        echo "Creating Python virtual environment..."
+        python3 -m venv {{TT_VENV_DIR}}
+    fi
+
+    # Activate and install dependencies
+    echo "Installing dependencies..."
+    source {{TT_VENV_DIR}}/bin/activate
+
+    # On macOS, set up paths for Homebrew libraries before installing Python packages
+    if [[ "$(uname)" == "Darwin" ]]; then
+        BREW_PREFIX="$(brew --prefix)"
+        export PKG_CONFIG_PATH="${BREW_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+        export LDFLAGS="-L${BREW_PREFIX}/lib"
+        export CPPFLAGS="-I${BREW_PREFIX}/include"
+
+        # Create sitecustomize.py to help cffi find Homebrew libraries
+        SITE_PACKAGES=$(python3 -c "import site; print(site.getsitepackages()[0])")
+        echo "Creating sitecustomize.py for cairo library path..."
+        printf '%s\n' \
+            'import os' \
+            'import ctypes' \
+            '' \
+            '# Help cffi/cairocffi find Homebrew libraries on macOS' \
+            'brew_lib = "/opt/homebrew/lib"' \
+            'if os.path.exists(brew_lib):' \
+            '    try:' \
+            '        ctypes.CDLL(os.path.join(brew_lib, "libcairo.2.dylib"))' \
+            '    except OSError:' \
+            '        pass' \
+            > "${SITE_PACKAGES}/sitecustomize.py"
+    fi
+
+    pip install --upgrade pip
+    pip install -r {{TT_TOOLS_DIR}}/requirements.txt
+    pip install librelane=={{LIBRELANE_VERSION}}
+
+    echo ""
+    echo "Setup complete!"
+    echo "  tt-support-tools: {{TT_TOOLS_DIR}}/"
+    echo "  Virtual env: {{TT_VENV_DIR}}/"
+    echo "  LibreLane: {{LIBRELANE_VERSION}}"
+
+# Run GDS hardening with LibreLane (IHP SG13G2)
+gds_harden:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Check if setup was done
+    if [ ! -d "{{TT_TOOLS_DIR}}" ] || [ ! -d "{{TT_VENV_DIR}}" ]; then
+        echo "TinyTapeout tools not set up. Running setup first..."
+        just setup-tt
+    fi
+
+    echo "Running GDS hardening for IHP SG13G2..."
+    echo "  LibreLane: {{LIBRELANE_VERSION}}"
+    echo ""
+
+    source {{TT_VENV_DIR}}/bin/activate
+
+    # Set environment for IHP
+    export PDK=ihp-sg13g2
+
+    # On macOS, create a wrapper to handle library paths (SIP strips DYLD_* vars)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        BREW_PREFIX="$(brew --prefix)"
+        CAIRO_LIB="${BREW_PREFIX}/lib/libcairo.2.dylib"
+
+        # Create symlinks in the venv lib if they don't exist
+        VENV_LIB="{{TT_VENV_DIR}}/lib"
+        mkdir -p "$VENV_LIB"
+        if [ ! -e "$VENV_LIB/libcairo.2.dylib" ]; then
+            echo "Creating cairo library symlink in venv..."
+            ln -sf "$CAIRO_LIB" "$VENV_LIB/libcairo.2.dylib"
+            ln -sf "${BREW_PREFIX}/lib/libcairo.dylib" "$VENV_LIB/libcairo.dylib"
+        fi
+
+        # Set library path to include venv lib
+        export DYLD_FALLBACK_LIBRARY_PATH="${VENV_LIB}:${BREW_PREFIX}/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+    fi
+
+    # Create user config
+    echo "Creating user config..."
+    ./{{TT_TOOLS_DIR}}/tt_tool.py --create-user-config --ihp
+
+    # Run hardening
+    echo ""
+    echo "Running LibreLane hardening (this may take several minutes)..."
+    ./{{TT_TOOLS_DIR}}/tt_tool.py --harden --ihp
+
+    echo ""
+    echo "Checking for warnings..."
+    ./{{TT_TOOLS_DIR}}/tt_tool.py --print-warnings --ihp || true
+
+    echo ""
+    echo "GDS hardening complete!"
+    echo "Output: runs/wokwi/"
+
+# Helper to set up environment for tt_tool.py
+[private]
+tt-env:
+    #!/usr/bin/env bash
+    # This is sourced by other recipes
+
+# View GDS in OpenROAD GUI
+view_gds:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ ! -d "{{TT_VENV_DIR}}" ]; then
+        echo "Run 'just setup-tt' first"
+        exit 1
+    fi
+
+    source {{TT_VENV_DIR}}/bin/activate
+    [[ "$(uname)" == "Darwin" ]] && export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+    export PDK=ihp-sg13g2
+
+    echo "Opening GDS in OpenROAD GUI..."
+    ./{{TT_TOOLS_DIR}}/tt_tool.py --open-in-openroad --ihp
+
+# View GDS in KLayout
+view_klayout:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ ! -d "{{TT_VENV_DIR}}" ]; then
+        echo "Run 'just setup-tt' first"
+        exit 1
+    fi
+
+    source {{TT_VENV_DIR}}/bin/activate
+    [[ "$(uname)" == "Darwin" ]] && export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+    export PDK=ihp-sg13g2
+
+    echo "Opening GDS in KLayout..."
+    ./{{TT_TOOLS_DIR}}/tt_tool.py --open-in-klayout --ihp
+
+# Generate PNG preview of the GDS layout
+gds_png:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ ! -d "{{TT_VENV_DIR}}" ]; then
+        echo "Run 'just setup-tt' first"
+        exit 1
+    fi
+
+    source {{TT_VENV_DIR}}/bin/activate
+    [[ "$(uname)" == "Darwin" ]] && export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+    export PDK=ihp-sg13g2
+
+    echo "Generating PNG preview..."
+    ./{{TT_TOOLS_DIR}}/tt_tool.py --create-png --ihp
+    echo "PNG generation complete!"
+
+# Print hardening warnings
+gds_warnings:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if [ ! -d "{{TT_VENV_DIR}}" ]; then
+        echo "Run 'just setup-tt' first"
+        exit 1
+    fi
+
+    source {{TT_VENV_DIR}}/bin/activate
+    [[ "$(uname)" == "Darwin" ]] && export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib:${DYLD_FALLBACK_LIBRARY_PATH:-}"
+    export PDK=ihp-sg13g2
+
+    ./{{TT_TOOLS_DIR}}/tt_tool.py --print-warnings --ihp
+
+# Clean GDS build artifacts
+clean-gds:
+    #!/usr/bin/env bash
+    echo "Cleaning GDS artifacts..."
+    rm -rf runs/
+    rm -f src/user_config.json
+    rm -f src/config_merged.json
+    echo "GDS clean complete"
+
+# Clean TinyTapeout setup (keeps tt-support-tools)
+clean-tt:
+    #!/usr/bin/env bash
+    echo "Cleaning TinyTapeout virtual environment..."
+    rm -rf {{TT_VENV_DIR}}
+    echo "Clean complete (tt-support-tools kept)"
+
+# Full clean including tt-support-tools
+clean-tt-all:
+    #!/usr/bin/env bash
+    echo "Cleaning all TinyTapeout files..."
+    rm -rf {{TT_VENV_DIR}}
+    rm -rf {{TT_TOOLS_DIR}}
+    rm -rf runs/
+    rm -f src/user_config.json
+    rm -f src/config_merged.json
+    echo "Full TinyTapeout clean complete"

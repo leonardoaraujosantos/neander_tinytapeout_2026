@@ -34,7 +34,7 @@ The Neander processor is a minimal, accumulator-based architecture designed for 
 
 - 8-bit data width
 - **16-bit address space (64KB of memory via SPI SRAM)**
-- Single accumulator architecture with X, Y, and FP registers
+- Single accumulator architecture with X, Y, B, and FP registers
 - Direct and indexed addressing modes
 - Three condition flags (N, Z, and C)
 - **60+ instructions** including stack operations, hardware multiply/divide
@@ -52,7 +52,7 @@ The Neander processor is a minimal, accumulator-based architecture designed for 
 | Memory Size | 256 bytes | **64KB (via SPI SRAM)** |
 | Number Format | Two's complement | Two's complement |
 | Addressing Mode | Direct only | Direct, Indexed (X, Y, FP) |
-| Accumulator Count | 1 | 1 + X, Y registers |
+| Accumulator Count | 1 | 1 + X, Y, B registers |
 | Condition Flags | 2 (N, Z) | **3 (N, Z, C)** |
 | Instruction Count | 11 | **60+** |
 
@@ -68,6 +68,7 @@ The Neander processor is a minimal, accumulator-based architecture designed for 
 | AC | 8-bit | Accumulator |
 | X | 8-bit | Index Register X |
 | Y | 8-bit | Index Register Y |
+| B | 16-bit | Auxiliary Register B |
 | RI | 8-bit | Instruction Register |
 
 ### Block Diagram (NEANDER-X with 16-bit Addressing)
@@ -102,8 +103,8 @@ The Neander processor is a minimal, accumulator-based architecture designed for 
               |
               v
          +----+----+     +----------+     +-----+-----+
-         |   AC    |<----|   ALU    |---->|   X, Y    |
-         | (8-bit) |     +----------+     |  (8-bit)  |
+         |   AC    |<----|   ALU    |---->| X, Y, B   |
+         | (8-bit) |     +----------+     | (8/16-bit)|
          +---------+                      +-----------+
               |
               v
@@ -242,6 +243,77 @@ These instructions were added to support the LCC C compiler backend for NEANDER-
 | Opcode | Mnemonic | Operation | Description |
 |--------|----------|-----------|-------------|
 | 0x88 | DECJNZ addr | AC <- AC - 1; if AC != 0 then PC <- addr | Decrement and jump if not zero |
+
+### B Register Extension Instructions
+
+The B register provides additional storage for complex operations and reduces memory traffic when working with multiple values. Unlike the X and Y registers which are primarily for indexing, B is designed as a general-purpose auxiliary register.
+
+#### B Register Basic Instructions
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x1C | TAB | B <- AC | - |
+| 0x1D | TBA | AC <- B | N, Z |
+| 0x1E | LDB addr | B <- MEM[addr] | - |
+| 0x1F | STB addr | MEM[addr] <- B | - |
+| 0xE4 | LDBI imm | B <- imm (16-bit immediate) | - |
+
+#### B Register Arithmetic/Logic Instructions
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x36 | INB | B <- B + 1 | - |
+| 0x37 | DEB | B <- B - 1 | - |
+| 0x38 | SWPB | AC <-> B (swap) | N, Z |
+| 0x39 | ADDB | AC <- AC + B | N, Z, C |
+| 0x3A | SUBB | AC <- AC - B | N, Z, C |
+
+**Usage Example:**
+
+```assembly
+; Use B register for temporary storage during complex calculation
+    LDI 100         ; AC = 100
+    TAB             ; B = 100 (save first operand)
+    LDA value2      ; AC = MEM[value2]
+    ADDB            ; AC = AC + B (add first operand)
+    STA result      ; Store result
+
+; Use B as a counter
+    LDBI 10         ; B = 10
+loop:
+    DEB             ; B = B - 1
+    TBA             ; AC = B
+    JNZ loop        ; Continue if B != 0
+```
+
+### Memory Stack Operations (PUSH_ADDR/POP_ADDR)
+
+These instructions push/pop values from any memory address to/from the stack, making it easier for the LCC compiler backend to handle complex expressions without using the accumulator.
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x89 | PUSH_ADDR addr | SP -= 2; MEM[SP] <- MEM[addr] | - |
+| 0x8A | POP_ADDR addr | MEM[addr] <- MEM[SP]; SP += 2 | - |
+
+**PUSH_ADDR addr:** Pushes the 16-bit value at the specified memory address onto the stack. This is equivalent to: `LDA addr; PUSH` but in a single instruction.
+
+**POP_ADDR addr:** Pops the top 16-bit value from the stack and stores it at the specified memory address. This is equivalent to: `POP; STA addr` but in a single instruction.
+
+**Usage Example:**
+
+```assembly
+; Save multiple values to stack without using AC
+    PUSH_ADDR var1      ; Push MEM[var1] onto stack
+    PUSH_ADDR var2      ; Push MEM[var2] onto stack
+    PUSH_ADDR var3      ; Push MEM[var3] onto stack
+
+    ; ... do some work that uses AC ...
+
+; Restore values in reverse order (LIFO)
+    POP_ADDR var3       ; Restore var3 from stack
+    POP_ADDR var2       ; Restore var2 from stack
+    POP_ADDR var1       ; Restore var1 from stack
+```
 
 ### Instruction Encoding Examples (16-bit Addressing)
 

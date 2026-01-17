@@ -15,7 +15,9 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 - **LCC Extension**: SUB, INC, DEC, XOR, SHL, SHR, ASR, NEG, CMP, ADC, SBC for C compiler support
 - **X Register**: Index register with LDX, STX, LDXI, TAX, TXA, INX
 - **Y Register**: Second index register with LDY, STY, LDYI, TAY, TYA, INY
+- **B Register**: Auxiliary register with LDB, STB, LDBI, TAB, TBA, INB, DEB, SWPB, ADDB, SUBB
 - **Frame Pointer**: FP register (16-bit) with TSF, TFS, PUSH_FP, POP_FP for stack frame management
+- **Memory Stack Operations**: PUSH_ADDR/POP_ADDR for pushing/popping any memory address to/from stack
 - **Indexed Addressing**: LDA/STA with ,X, ,Y, and ,FP modes for array/pointer/local variable access
 - **Hardware Multiplication**: MUL instruction using sequential multiplier (16 cycles for 16-bit operands, area-efficient)
 - **Hardware Division**: DIV and MOD instructions using sequential divider (16 cycles for 16-bit operands, area-efficient)
@@ -23,8 +25,8 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
 ### Key Features
 
 - **16-bit data width** with **16-bit address space (64KB)**
-- Single accumulator architecture with X, Y, and FP registers
-- **16-bit registers**: AC, X, Y, PC, SP, FP, REM, RDM for full 16-bit arithmetic
+- Single accumulator architecture with X, Y, B, and FP registers
+- **16-bit registers**: AC, X, Y, B, PC, SP, FP, REM, RDM for full 16-bit arithmetic
 - Three condition flags (N: Negative, Z: Zero, C: Carry)
 - 60+ instructions including:
   - Stack operations (PUSH/POP/CALL/RET)
@@ -33,7 +35,9 @@ NEANDER is a minimal accumulator-based processor developed at [UFRGS](https://ww
   - Comparison jumps (JLE, JGT, JGE, JBE, JA) for signed/unsigned comparisons
   - X register operations (LDX, STX, LDXI, TAX, TXA, INX)
   - Y register operations (LDY, STY, LDYI, TAY, TYA, INY)
+  - B register operations (LDB, STB, LDBI, TAB, TBA, INB, DEB, SWPB, ADDB, SUBB)
   - Frame pointer operations (TSF, TFS, PUSH_FP, POP_FP)
+  - Memory stack operations (PUSH_ADDR, POP_ADDR)
   - Indexed addressing modes (LDA/STA with ,X, ,Y, and ,FP)
   - Hardware multiplication (MUL: sequential multiplier, 16 cycles for area efficiency)
   - Hardware division (DIV, MOD: sequential divider, 16 cycles for area efficiency)
@@ -202,6 +206,32 @@ The Y index register provides a second index for dual-pointer operations:
 |--------|----------|-----------|-------|
 | 0x22 | LDA addr,Y | AC <- MEM[addr + Y] | N, Z |
 | 0x12 | STA addr,Y | MEM[addr + Y] <- AC | - |
+
+### B Register Extension
+
+The B register provides additional storage for complex operations and is designed as a general-purpose auxiliary register:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x1C | TAB | B <- AC | - |
+| 0x1D | TBA | AC <- B | N, Z |
+| 0x1E | LDB addr | B <- MEM[addr] | - |
+| 0x1F | STB addr | MEM[addr] <- B | - |
+| 0xE4 | LDBI imm | B <- imm (16-bit) | - |
+| 0x36 | INB | B <- B + 1 | - |
+| 0x37 | DEB | B <- B - 1 | - |
+| 0x38 | SWPB | AC <-> B (swap) | N, Z |
+| 0x39 | ADDB | AC <- AC + B | N, Z, C |
+| 0x3A | SUBB | AC <- AC - B | N, Z, C |
+
+### Memory Stack Operations
+
+These instructions push/pop values from any memory address to/from the stack:
+
+| Opcode | Mnemonic | Operation | Flags |
+|--------|----------|-----------|-------|
+| 0x89 | PUSH_ADDR addr | SP -= 2; MEM[SP] <- MEM[addr] | - |
+| 0x8A | POP_ADDR addr | MEM[addr] <- MEM[SP]; SP += 2 | - |
 
 ### Frame Pointer Extension
 
@@ -402,6 +432,7 @@ graph TB
         FP[FP<br/>Frame Pointer<br/>16-bit]
         X[X<br/>Index Register<br/>16-bit]
         Y[Y<br/>Index Register<br/>16-bit]
+        B[B<br/>Auxiliary Reg<br/>16-bit]
         RI[RI<br/>Instruction Reg<br/>8-bit]
         REM[REM<br/>Address Reg<br/>16-bit]
         RDM[RDM<br/>Data Reg<br/>16-bit]
@@ -439,8 +470,10 @@ graph TB
     ALU --> Y
     AC --> X
     AC --> Y
+    AC --> B
     X --> AC
     Y --> AC
+    B --> AC
     SP --> FP
     FP --> SP
     RAM -->|data| ALU
@@ -465,6 +498,7 @@ tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
 │   │   ├── rdm_reg (Data Register, 16-bit, separate lo/hi loading)
 │   │   ├── x_reg (X Index Register, 16-bit)
 │   │   ├── y_reg (Y Index Register, 16-bit)
+│   │   ├── b_reg (B Auxiliary Register, 16-bit)
 │   │   ├── mux_addr (3-way Address MUX, 16-bit)
 │   │   ├── generic_reg (RI - 8-bit, AC - 16-bit)
 │   │   ├── generic_reg_16 (REM - 16-bit)
@@ -491,6 +525,7 @@ tt_um_cpu_leonardoaraujosantos (TinyTapeout wrapper - project.sv)
 | AC | 16-bit | Accumulator |
 | X | 16-bit | Index Register X |
 | Y | 16-bit | Index Register Y |
+| B | 16-bit | Auxiliary Register B |
 | RI | 8-bit | Instruction Register (opcode) |
 | N, Z, C | 1-bit | Condition Flags |
 

@@ -38,9 +38,23 @@ class Op:
     DIV  = 0x0E  # DIV: AC / X -> AC (quotient), Y (remainder)
     MOD  = 0x0F  # MOD: AC % X -> AC (remainder), Y (quotient)
     STA  = 0x10
+    # B Register Extension (opcode 0x1 family)
+    TAB  = 0x1C  # TAB: B = AC
+    TBA  = 0x1D  # TBA: AC = B
+    LDB  = 0x1E  # LDB addr: B = MEM[addr]
+    STB  = 0x1F  # STB addr: MEM[addr] = B
     LDA  = 0x20
     ADD  = 0x30
     ADC  = 0x31  # ADC addr: AC = AC + MEM[addr] + Carry (add with carry)
+    ADDX = 0x32  # ADDX: AC = AC + X
+    SUBX = 0x33  # SUBX: AC = AC - X
+    ADDY = 0x34  # ADDY: AC = AC + Y
+    SUBY = 0x35  # SUBY: AC = AC - Y
+    INB  = 0x36  # INB: B = B + 1
+    DEB  = 0x37  # DEB: B = B - 1
+    SWPB = 0x38  # SWPB: Swap AC <-> B
+    ADDB = 0x39  # ADDB: AC = AC + B
+    SUBB = 0x3A  # SUBB: AC = AC - B
     OR   = 0x40
     AND  = 0x50
     SBC  = 0x51  # SBC addr: AC = AC - MEM[addr] - Carry (subtract with borrow)
@@ -83,12 +97,15 @@ class Op:
     # Unsigned comparison jumps (after CMP)
     JBE  = 0x86  # JBE addr: jump if below or equal (C=1 OR Z=1)
     JA   = 0x87  # JA addr: jump if above (C=0 AND Z=0)
+    PUSH_ADDR = 0x89  # PUSH_ADDR addr: MEM[--SP] = MEM[addr]
+    POP_ADDR  = 0x8A  # POP_ADDR addr: MEM[addr] = MEM[SP++]
     JN   = 0x90
     JZ   = 0xA0
     JNZ  = 0xB0
     IN   = 0xC0
     OUT  = 0xD0
     LDI  = 0xE0
+    LDBI = 0xE4  # LDBI imm: B = imm (16-bit)
     HLT  = 0xF0
 
 
@@ -99,6 +116,7 @@ class Op:
 # Opcodes that take a memory address (need expansion from 2 bytes to 3 bytes)
 MEMORY_ADDRESS_OPCODES = {
     0x10, 0x11, 0x12, 0x14,  # STA family
+    0x1E, 0x1F,              # LDB, STB (B register)
     0x20, 0x21, 0x22, 0x24,  # LDA family
     0x30, 0x31,              # ADD, ADC
     0x40,                    # OR
@@ -108,6 +126,7 @@ MEMORY_ADDRESS_OPCODES = {
     0x7A, 0x7B,              # LDX, STX
     0x07, 0x08,              # LDY, STY
     0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87,  # JMP, JC, JNC, JLE, JGT, JGE, JBE, JA
+    0x89, 0x8A,              # PUSH_ADDR, POP_ADDR
     0x90, 0xA0, 0xB0,        # JN, JZ, JNZ
     0x72,                    # CALL
 }
@@ -123,6 +142,7 @@ IMMEDIATE_16BIT_OPCODES = {
     0xE0,  # LDI  (16-bit immediate)
     0x7C,  # LDXI (16-bit immediate)
     0x06,  # LDYI (16-bit immediate)
+    0xE4,  # LDBI (16-bit immediate for B register)
 }
 
 # Opcodes that take an 8-bit immediate/port (keep as 2 bytes)
