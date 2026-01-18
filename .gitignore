@@ -19,3 +19,7 @@ cocotb_tests_lcc/sim_build/
 cocotb_tests_lcc/results.xml
 tt/
 .venv_tt/
+lcc_samples/*.bin
+lcc_samples/*.hex
+lcc_samples/*.s
+cocotb_tests_lcc/lcc_programs.py
