@@ -27,7 +27,6 @@ module interconnect_tb_wrapper (
     output logic [15:0] dbg_x,
     output logic [15:0] dbg_y,
     output logic [15:0] dbg_fp,
-    output logic [15:0] dbg_b,
 
     // Peripheral outputs
     output logic        pwm_out,
@@ -181,8 +180,7 @@ module interconnect_tb_wrapper (
         .dbg_sp(dbg_sp),
         .dbg_x(dbg_x),
         .dbg_y(dbg_y),
-        .dbg_fp(dbg_fp),
-        .dbg_b(dbg_b)
+        .dbg_fp(dbg_fp)
     );
 
     // ============================================================================

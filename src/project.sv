@@ -87,7 +87,6 @@ module tt_um_cpu_leonardoaraujosantos (
   wire [15:0] dbg_x;
   wire [15:0] dbg_y;
   wire [15:0] dbg_fp;
-  wire [15:0] dbg_b;
 
   // ============================================================================
   // Interconnect Hub <-> SPI Memory Controller Interface
@@ -151,8 +150,7 @@ module tt_um_cpu_leonardoaraujosantos (
     .dbg_sp(dbg_sp),
     .dbg_x(dbg_x),
     .dbg_y(dbg_y),
-    .dbg_fp(dbg_fp),
-    .dbg_b(dbg_b)
+    .dbg_fp(dbg_fp)
   );
 
   // ============================================================================
@@ -277,6 +275,6 @@ module tt_um_cpu_leonardoaraujosantos (
   // Unused signals
   // ============================================================================
   wire _unused = &{ena, ui_in[7:4], uio_in[7:3], uio_in[1:0],
-                   dbg_ac, dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_b, dbg_pc, 1'b0};
+                   dbg_ac, dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_pc, 1'b0};
 
 endmodule
