@@ -3,7 +3,7 @@ project:
   title:        "NeanderCPU"      # Project title
   author:       "Leonardo Araujo dos Santos"      # Your name
   discord:      "leonardoaraujos"      # Your discord username, for communication and automatically assigning you a Tapeout role (optional)
-  description:  "Brazilian 8-bit educational CPU with SPI memory interface"      # One line description of what your project does
+  description:  "Brazilian 16-bit educational CPU with SPI memory and interconnect hub"      # One line description of what your project does
   language:     "SystemVerilog" # other examples include SystemVerilog, Amaranth, VHDL, etc
   clock_hz:     10000000       # Clock frequency in Hz (or 0 if not applicable)
 
@@ -24,40 +24,47 @@ project:
     - "sequential_multiplier.sv"
     - "top_cpu_neander_x.sv"
     - "spi_memory_controller.sv"
+    # Interconnect hub modules
+    - "debug_rom.sv"
+    - "pwm.sv"
+    - "timer.sv"
+    - "irq_ctrl.sv"
+    - "spi_periph.sv"
+    - "interconnect_hub.sv"
     - "project.sv"
 
 # The pinout of your project. Leave unused pins blank. DO NOT delete or add any pins.
 # This section is for the datasheet/website. Use descriptive names (e.g., RX, TX, MOSI, SCL, SEG_A, etc.).
 pinout:
-  # Inputs - SPI MISO and I/O Input Port
-  ui[0]: "SPI_MISO"
-  ui[1]: "IO_IN[1]"
-  ui[2]: "IO_IN[2]"
-  ui[3]: "IO_IN[3]"
-  ui[4]: "IO_IN[4]"
-  ui[5]: "IO_IN[5]"
-  ui[6]: "IO_IN[6]"
-  ui[7]: "IO_IN[7]"
+  # Inputs - Boot mode and external inputs
+  ui[0]: "BOOT_SEL"
+  ui[1]: "IRQ_IN"
+  ui[2]: "EXT_IN0"
+  ui[3]: "EXT_IN1"
+  ui[4]: ""
+  ui[5]: ""
+  ui[6]: ""
+  ui[7]: ""
 
-  # Outputs - SPI Interface and Debug
-  uo[0]: "SPI_CS_N"
-  uo[1]: "SPI_SCLK"
-  uo[2]: "SPI_MOSI"
-  uo[3]: "DBG_AC[0]"
-  uo[4]: "DBG_AC[1]"
-  uo[5]: "DBG_AC[2]"
-  uo[6]: "DBG_AC[3]"
-  uo[7]: "IO_WRITE"
+  # Outputs - PWM, Timer, External outputs, SPI chip selects
+  uo[0]: "PWM_OUT"
+  uo[1]: "EXT_OUT0"
+  uo[2]: "EXT_OUT1"
+  uo[3]: "TIMER_OUT"
+  uo[4]: "CS_UART"
+  uo[5]: "CS_ETH"
+  uo[6]: "CS_DAC"
+  uo[7]: "CS_ADC"
 
-  # Bidirectional pins - Debug Program Counter
-  uio[0]: "DBG_PC[0]"
-  uio[1]: "DBG_PC[1]"
-  uio[2]: "DBG_PC[2]"
-  uio[3]: "DBG_PC[3]"
-  uio[4]: "DBG_PC[4]"
-  uio[5]: "DBG_PC[5]"
-  uio[6]: "DBG_PC[6]"
-  uio[7]: "DBG_PC[7]"
+  # Bidirectional pins - Shared SPI bus and chip selects
+  uio[0]: "SPI_SCLK"
+  uio[1]: "SPI_MOSI"
+  uio[2]: "SPI_MISO"
+  uio[3]: "CS_FLASH"
+  uio[4]: "CS_GPIO"
+  uio[5]: "CS_RAM"
+  uio[6]: ""
+  uio[7]: ""
 
 # Do not change!
 yaml_version: 6
