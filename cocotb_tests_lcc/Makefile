@@ -14,10 +14,18 @@ VERILOG_SOURCES += $(PWD)/../src/sequential_multiplier.sv
 VERILOG_SOURCES += $(PWD)/../src/top_cpu_neander_x.sv
 VERILOG_SOURCES += $(PWD)/../src/spi_memory_controller.sv
 VERILOG_SOURCES += $(PWD)/../src/spi_sram_model.sv
-VERILOG_SOURCES += $(PWD)/../cocotb_tests/neander_tb_wrapper.sv
+# Interconnect hub modules
+VERILOG_SOURCES += $(PWD)/../src/debug_rom.sv
+VERILOG_SOURCES += $(PWD)/../src/pwm.sv
+VERILOG_SOURCES += $(PWD)/../src/timer.sv
+VERILOG_SOURCES += $(PWD)/../src/irq_ctrl.sv
+VERILOG_SOURCES += $(PWD)/../src/spi_periph.sv
+VERILOG_SOURCES += $(PWD)/../src/interconnect_hub.sv
+# Testbench wrapper (uses interconnect hub)
+VERILOG_SOURCES += $(PWD)/../cocotb_tests/interconnect_tb_wrapper.sv
 
 # Top level module (the testbench wrapper)
-TOPLEVEL = neander_tb_wrapper
+TOPLEVEL = interconnect_tb_wrapper
 
 # Python test module
 MODULE ?= test_lcc_programs

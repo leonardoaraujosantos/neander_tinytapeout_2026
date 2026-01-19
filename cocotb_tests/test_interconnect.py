@@ -271,20 +271,26 @@ async def test_ext_out_from_cpu(dut):
     tb = InterconnectTestbench(dut)
     await tb.setup()
 
-    # Load program: LDI 0x0003, OUT 0x01 (set both EXT_OUT bits)
+    # Load program: LDI 0x0003, OUT 0x01, OUT with result, HLT
+    # Use io_write detection instead of wait_for_pc for more reliable sync
     program = [
         OP_LDI, 0x03, 0x00,  # LDI 0x0003
-        OP_OUT, 0x01,        # OUT port 1
+        OP_OUT, 0x01,        # OUT port 1 (this triggers io_write)
         OP_HLT               # HLT
     ]
     await tb.load_program(program)
     await tb.reset()
 
-    # Wait for HLT
-    await tb.wait_for_pc(0x0005, max_cycles=5000)
+    # Wait for io_write to detect OUT instruction completion
+    found = await tb.wait_for_io_write(max_cycles=5000)
+    assert found, "Expected io_write from OUT instruction"
+
+    # Give one more cycle for ext_out register to update
+    await tb.wait_cycles(2)
 
     ext_out_val = int(dut.ext_out.value)
-    dut._log.info(f"EXT_OUT value: {ext_out_val:02b}")
+    io_out_val = int(dut.io_out.value)
+    dut._log.info(f"EXT_OUT value: {ext_out_val:02b}, io_out: 0x{io_out_val:02X}")
     assert ext_out_val == 0b11, f"Expected EXT_OUT=0b11, got {ext_out_val:02b}"
 
 
@@ -298,22 +304,26 @@ async def test_ram_access_low_address(dut):
     tb = InterconnectTestbench(dut)
     await tb.setup()
 
-    # Load program: LDI 0x1234, STA 0x0100, LDA 0x0100, HLT
+    # Load program: LDI 0x1234, STA 0x0100, LDA 0x0100, OUT result, HLT
+    # Use OUT to signal completion (more reliable than wait_for_pc)
     program = [
-        OP_LDI, 0x34, 0x12,  # LDI 0x1234
-        OP_STA, 0x00, 0x01,  # STA 0x0100
-        OP_LDI, 0x00, 0x00,  # LDI 0x0000 (clear AC)
-        OP_LDA, 0x00, 0x01,  # LDA 0x0100 (load back)
-        OP_HLT               # HLT
+        OP_LDI, 0x34, 0x12,  # 0x00: LDI 0x1234
+        OP_STA, 0x00, 0x01,  # 0x03: STA 0x0100
+        OP_LDI, 0x00, 0x00,  # 0x06: LDI 0x0000 (clear AC)
+        OP_LDA, 0x00, 0x01,  # 0x09: LDA 0x0100 (load back)
+        OP_OUT, 0x00,        # 0x0C: OUT port 0 (signal completion)
+        OP_HLT               # 0x0E: HLT
     ]
     await tb.load_program(program)
     await tb.reset()
 
-    # Wait for HLT
-    await tb.wait_for_pc(0x000C, max_cycles=10000)
+    # Wait for io_write which signals that LDA has completed and value is in AC
+    found = await tb.wait_for_io_write(max_cycles=15000)
+    assert found, "Expected io_write from OUT instruction"
 
     ac = int(dut.dbg_ac.value)
-    dut._log.info(f"AC value after load: 0x{ac:04X}")
+    io_out_val = int(dut.io_out.value)
+    dut._log.info(f"AC value after load: 0x{ac:04X}, io_out: 0x{io_out_val:04X}")
     assert ac == 0x1234, f"Expected AC=0x1234, got 0x{ac:04X}"
 
 
@@ -323,22 +333,26 @@ async def test_ram_access_high_address(dut):
     tb = InterconnectTestbench(dut)
     await tb.setup()
 
-    # Load program: LDI 0xABCD, STA 0xDF00, LDA 0xDF00, HLT
+    # Load program: LDI 0xABCD, STA 0xDF00, LDA 0xDF00, OUT result, HLT
+    # Use OUT to signal completion (more reliable than wait_for_pc)
     program = [
-        OP_LDI, 0xCD, 0xAB,  # LDI 0xABCD
-        OP_STA, 0x00, 0xDF,  # STA 0xDF00
-        OP_LDI, 0x00, 0x00,  # LDI 0x0000 (clear AC)
-        OP_LDA, 0x00, 0xDF,  # LDA 0xDF00 (load back)
-        OP_HLT               # HLT
+        OP_LDI, 0xCD, 0xAB,  # 0x00: LDI 0xABCD
+        OP_STA, 0x00, 0xDF,  # 0x03: STA 0xDF00
+        OP_LDI, 0x00, 0x00,  # 0x06: LDI 0x0000 (clear AC)
+        OP_LDA, 0x00, 0xDF,  # 0x09: LDA 0xDF00 (load back)
+        OP_OUT, 0x00,        # 0x0C: OUT port 0 (signal completion)
+        OP_HLT               # 0x0E: HLT
     ]
     await tb.load_program(program)
     await tb.reset()
 
-    # Wait for HLT
-    await tb.wait_for_pc(0x000C, max_cycles=15000)
+    # Wait for io_write which signals that LDA has completed and value is in AC
+    found = await tb.wait_for_io_write(max_cycles=20000)
+    assert found, "Expected io_write from OUT instruction"
 
     ac = int(dut.dbg_ac.value)
-    dut._log.info(f"AC value after load from 0xDF00: 0x{ac:04X}")
+    io_out_val = int(dut.io_out.value)
+    dut._log.info(f"AC value after load from 0xDF00: 0x{ac:04X}, io_out: 0x{io_out_val:04X}")
     assert ac == 0xABCD, f"Expected AC=0xABCD, got 0x{ac:04X}"
 
 

@@ -257,12 +257,14 @@ class NeanderTestbench:
         self.clock = Clock(self.dut.clk, clock_period_ns, units="ns")
         cocotb.start_soon(self.clock.start())
 
+        # Initialize signals for interconnect wrapper
         self.dut.reset.value = 1
+        self.dut.boot_sel.value = 0      # Boot from SPI RAM (not Debug ROM)
+        self.dut.irq_in.value = 0        # No external IRQ
+        self.dut.ext_in.value = 0        # External inputs
         self.dut.mem_load_en.value = 0
         self.dut.mem_load_addr.value = 0
         self.dut.mem_load_data.value = 0
-        self.dut.io_in.value = 0
-        self.dut.io_status.value = 0
         self.dut.mem_read_addr.value = 0
 
         await ClockCycles(self.dut.clk, 5)
@@ -321,11 +323,15 @@ class NeanderTestbench:
         raise TimeoutError(f"CPU did not halt within {max_cycles} cycles")
 
     async def wait_for_io_write(self, max_cycles=100000):
-        """Wait for an I/O write operation"""
+        """Wait for an I/O write operation (detect via ext_out change)"""
         cycles = 0
+        last_ext_out = int(self.dut.ext_out.value) if hasattr(self.dut, 'ext_out') else 0
         while cycles < max_cycles:
             await RisingEdge(self.dut.clk)
             cycles += 1
-            if self.dut.io_write.value == 1:
-                return int(self.dut.io_out.value)
+            if hasattr(self.dut, 'ext_out'):
+                current_ext_out = int(self.dut.ext_out.value)
+                if current_ext_out != last_ext_out:
+                    return current_ext_out
+                last_ext_out = current_ext_out
         raise TimeoutError(f"No I/O write within {max_cycles} cycles")
