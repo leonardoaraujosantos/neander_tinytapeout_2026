@@ -2,8 +2,9 @@
  * Copyright (c) 2024 Leonardo Araujo Santos
  * SPDX-License-Identifier: Apache-2.0
  *
- * Neander-X CPU for TinyTapeout with SPI Memory Interface
- * 16-bit educational processor with 64KB address space via SPI SRAM
+ * Neander-X CPU for TinyTapeout with Interconnect Hub
+ * 16-bit educational processor with 64KB address space via SPI SRAM/Flash
+ * Includes PWM, Timer, IRQ controller, and SPI peripheral engine
  */
 
 `default_nettype none
@@ -20,68 +21,106 @@ module tt_um_cpu_leonardoaraujosantos (
 );
 
   // ============================================================================
-  // Pin Mapping for SPI Memory Interface
+  // Pin Mapping (per INTERCONNECT_SPEC.md Section 10)
   // ============================================================================
-  // uo_out[0] = SPI_CS_N   - Chip select (directly to SPI SRAM)
-  // uo_out[1] = SPI_SCLK   - Serial clock (directly to SPI SRAM)
-  // uo_out[2] = SPI_MOSI   - Master Out Slave In (directly to SPI SRAM)
-  // uo_out[3] = reserved (directly from debug)
-  // uo_out[4] = reserved (directly from debug)
-  // uo_out[5] = reserved (directly from debug)
-  // uo_out[6] = reserved (directly from debug)
-  // uo_out[7] = IO_WRITE   - I/O write strobe for external output latch
+  // ui_in[0] = BOOT_SEL   - Boot mode selection (0=SPI RAM, 1=Debug ROM)
+  // ui_in[1] = IRQ_IN     - External interrupt input
+  // ui_in[2] = EXT_IN0    - External input 0
+  // ui_in[3] = EXT_IN1    - External input 1
+  // ui_in[7:4] = spare    - Spare inputs for debug/straps
   //
-  // ui_in[0]  = SPI_MISO   - Master In Slave Out (directly from SPI SRAM)
-  // ui_in[7:1]= io_in      - General purpose input (directly from switches/keyboard)
+  // uo_out[0] = PWM_OUT   - PWM output
+  // uo_out[1] = EXT_OUT0  - External output 0
+  // uo_out[2] = EXT_OUT1  - External output 1
+  // uo_out[3] = TIMER_OUT - Timer output
+  // uo_out[4] = CS_UART   - SPI CS for UART bridge
+  // uo_out[5] = CS_ETH    - SPI CS for Ethernet
+  // uo_out[6] = CS_DAC    - SPI CS for DAC
+  // uo_out[7] = CS_ADC    - SPI CS for ADC
   //
-  // uio[7:0]  = Debug outputs (directly from PC low byte and other debug)
+  // uio[0] = SPI_SCLK     - Shared SPI clock (out)
+  // uio[1] = SPI_MOSI     - Shared SPI MOSI (out)
+  // uio[2] = SPI_MISO     - Shared SPI MISO (in)
+  // uio[3] = CS_FLASH     - SPI CS for Flash (out)
+  // uio[4] = CS_GPIO      - SPI CS for GPIO expander (out)
+  // uio[5] = CS_RAM       - SPI CS for RAM (out)
+  // uio[6] = spare        - Spare (out)
+  // uio[7] = spare        - Spare (out)
   // ============================================================================
 
   // Reset is active high internally, rst_n is active low
   wire reset = ~rst_n;
 
   // ============================================================================
-  // CPU <-> SPI Controller Interface (16-bit data)
+  // Input Signal Mapping
   // ============================================================================
-  wire [15:0] cpu_mem_addr;       // 16-bit addressing (64KB space)
-  wire [15:0] cpu_mem_data_out;   // 16-bit data
-  wire [15:0] cpu_mem_data_in;    // 16-bit data
+  wire        boot_sel = ui_in[0];
+  wire        irq_in   = ui_in[1];
+  wire [1:0]  ext_in   = ui_in[3:2];
+
+  // SPI MISO from bidirectional IO
+  wire        spi_miso = uio_in[2];
+
+  // ============================================================================
+  // CPU Interface Signals
+  // ============================================================================
+  wire [15:0] cpu_mem_addr;
+  wire [15:0] cpu_mem_data_out;
+  wire [15:0] cpu_mem_data_in;
   wire        cpu_mem_write;
   wire        cpu_mem_read;
   wire        cpu_mem_req;
   wire        cpu_mem_ready;
 
-  // ============================================================================
-  // SPI Controller <-> External SPI SRAM Interface
-  // ============================================================================
-  wire        spi_cs_n;
-  wire        spi_sclk;
-  wire        spi_mosi;
-  wire        spi_miso;
+  wire [7:0]  cpu_io_out;
+  wire        cpu_io_write;
+  wire [7:0]  cpu_io_in;
+  wire [7:0]  cpu_io_status;
 
   // ============================================================================
-  // CPU <-> I/O Interface
-  // ============================================================================
-  wire [7:0]  io_out_internal;
-  wire        io_write;
-  wire [7:0]  io_in_cpu;
-  wire [7:0]  io_status;
-
-  // I/O input: use ui_in[7:1] for general I/O (ui_in[0] is SPI_MISO)
-  assign io_in_cpu = {ui_in[7:1], 1'b0};
-  assign io_status = 8'b0;  // Status register (unused for now)
-
-  // ============================================================================
-  // Debug signals - 16-bit data width
+  // Debug signals (directly from CPU)
   // ============================================================================
   wire [15:0] dbg_pc;
-  wire [15:0] dbg_ac;   // 16-bit AC
+  wire [15:0] dbg_ac;
   wire [7:0]  dbg_ri;
   wire [15:0] dbg_sp;
-  wire [15:0] dbg_x;    // 16-bit X
-  wire [15:0] dbg_y;    // 16-bit Y
+  wire [15:0] dbg_x;
+  wire [15:0] dbg_y;
   wire [15:0] dbg_fp;
-  wire [15:0] dbg_b;    // 16-bit B register
+  wire [15:0] dbg_b;
+
+  // ============================================================================
+  // Interconnect Hub <-> SPI Memory Controller Interface
+  // ============================================================================
+  wire        spi_mem_req;
+  wire        spi_mem_we;
+  wire [15:0] spi_mem_addr;
+  wire [15:0] spi_mem_wdata;
+  wire [15:0] spi_mem_rdata;
+  wire        spi_mem_ready;
+  wire        spi_mem_cs_select;
+  wire        spi_mem_busy;
+
+  // SPI Memory controller outputs
+  wire        spi_mem_cs_ram_n;
+  wire        spi_mem_cs_flash_n;
+  wire        spi_mem_sclk;
+  wire        spi_mem_mosi;
+
+  // ============================================================================
+  // SPI Peripheral Engine Interface
+  // ============================================================================
+  wire        spi_periph_sclk;
+  wire        spi_periph_mosi;
+  wire [5:0]  spi_periph_cs_n;
+  wire        spi_periph_busy;
+
+  // ============================================================================
+  // Peripheral Outputs
+  // ============================================================================
+  wire        pwm_out;
+  wire        timer_out;
+  wire [1:0]  ext_out;
 
   // ============================================================================
   // CPU Instantiation
@@ -90,7 +129,7 @@ module tt_um_cpu_leonardoaraujosantos (
     .clk(clk),
     .reset(reset),
 
-    // Memory interface (to SPI controller)
+    // Memory interface (to interconnect hub)
     .mem_addr(cpu_mem_addr),
     .mem_data_out(cpu_mem_data_out),
     .mem_data_in(cpu_mem_data_in),
@@ -99,11 +138,11 @@ module tt_um_cpu_leonardoaraujosantos (
     .mem_req(cpu_mem_req),
     .mem_ready(cpu_mem_ready),
 
-    // I/O interface
-    .io_in(io_in_cpu),
-    .io_status(io_status),
-    .io_out(io_out_internal),
-    .io_write(io_write),
+    // I/O interface (to interconnect hub)
+    .io_in(cpu_io_in),
+    .io_status(cpu_io_status),
+    .io_out(cpu_io_out),
+    .io_write(cpu_io_write),
 
     // Debug outputs
     .dbg_pc(dbg_pc),
@@ -117,48 +156,127 @@ module tt_um_cpu_leonardoaraujosantos (
   );
 
   // ============================================================================
+  // Interconnect Hub Instantiation
+  // ============================================================================
+  interconnect_hub hub (
+    .clk(clk),
+    .reset(reset),
+
+    // Boot mode selection
+    .boot_sel(boot_sel),
+
+    // CPU memory interface
+    .cpu_mem_addr(cpu_mem_addr),
+    .cpu_mem_data_out(cpu_mem_data_out),
+    .cpu_mem_data_in(cpu_mem_data_in),
+    .cpu_mem_write(cpu_mem_write),
+    .cpu_mem_read(cpu_mem_read),
+    .cpu_mem_req(cpu_mem_req),
+    .cpu_mem_ready(cpu_mem_ready),
+
+    // CPU I/O interface
+    .cpu_io_out(cpu_io_out),
+    .cpu_io_write(cpu_io_write),
+    .cpu_io_in(cpu_io_in),
+    .cpu_io_status(cpu_io_status),
+
+    // SPI Memory engine interface
+    .spi_mem_req(spi_mem_req),
+    .spi_mem_we(spi_mem_we),
+    .spi_mem_addr(spi_mem_addr),
+    .spi_mem_wdata(spi_mem_wdata),
+    .spi_mem_rdata(spi_mem_rdata),
+    .spi_mem_ready(spi_mem_ready),
+    .spi_mem_cs_select(spi_mem_cs_select),
+    .spi_mem_busy(spi_mem_busy),
+
+    // SPI peripheral outputs
+    .spi_periph_sclk(spi_periph_sclk),
+    .spi_periph_mosi(spi_periph_mosi),
+    .spi_periph_miso(spi_miso),
+    .spi_periph_cs_n(spi_periph_cs_n),
+    .spi_periph_busy(spi_periph_busy),
+
+    // PWM output
+    .pwm_out(pwm_out),
+
+    // Timer output
+    .timer_out(timer_out),
+
+    // External I/O
+    .ext_in(ext_in),
+    .ext_out(ext_out),
+
+    // IRQ input
+    .irq_in(irq_in)
+  );
+
+  // ============================================================================
   // SPI Memory Controller Instantiation
   // ============================================================================
   spi_memory_controller spi_ctrl (
     .clk(clk),
     .reset(reset),
 
-    // CPU Interface
-    .mem_req(cpu_mem_req),
-    .mem_we(cpu_mem_write),
-    .mem_addr(cpu_mem_addr),
-    .mem_wdata(cpu_mem_data_out),
-    .mem_rdata(cpu_mem_data_in),
-    .mem_ready(cpu_mem_ready),
+    // Hub interface
+    .mem_req(spi_mem_req),
+    .mem_we(spi_mem_we),
+    .mem_addr(spi_mem_addr),
+    .mem_wdata(spi_mem_wdata),
+    .mem_rdata(spi_mem_rdata),
+    .mem_ready(spi_mem_ready),
 
-    // SPI Interface (directly to external SPI SRAM)
-    .spi_cs_n(spi_cs_n),
-    .spi_sclk(spi_sclk),
-    .spi_mosi(spi_mosi),
+    // CS select and busy
+    .cs_select(spi_mem_cs_select),
+    .spi_busy(spi_mem_busy),
+
+    // SPI Interface
+    .spi_cs_ram_n(spi_mem_cs_ram_n),
+    .spi_cs_flash_n(spi_mem_cs_flash_n),
+    .spi_sclk(spi_mem_sclk),
+    .spi_mosi(spi_mem_mosi),
     .spi_miso(spi_miso)
   );
 
   // ============================================================================
+  // SPI Bus Arbitration
+  // ============================================================================
+  // SPI_MEM has priority over SPI_PERIPH (arbitration handled in hub)
+  // When SPI_MEM is active, its signals drive the bus; otherwise SPI_PERIPH
+  wire spi_sclk_out = spi_mem_busy ? spi_mem_sclk : spi_periph_sclk;
+  wire spi_mosi_out = spi_mem_busy ? spi_mem_mosi : spi_periph_mosi;
+
+  // ============================================================================
   // Output Pin Assignments
   // ============================================================================
-  // SPI signals on dedicated outputs
-  assign uo_out[0] = spi_cs_n;           // SPI Chip Select (directly to SRAM)
-  assign uo_out[1] = spi_sclk;           // SPI Clock (directly to SRAM)
-  assign uo_out[2] = spi_mosi;           // SPI MOSI (directly to SRAM)
-  assign uo_out[3] = dbg_ac[0];          // Debug: AC bit 0
-  assign uo_out[4] = dbg_ac[1];          // Debug: AC bit 1
-  assign uo_out[5] = dbg_ac[2];          // Debug: AC bit 2
-  assign uo_out[6] = dbg_ac[3];          // Debug: AC bit 3
-  assign uo_out[7] = io_write;           // I/O write strobe
+  // Dedicated outputs (uo_out)
+  assign uo_out[0] = pwm_out;              // PWM output
+  assign uo_out[1] = ext_out[0];           // EXT_OUT0
+  assign uo_out[2] = ext_out[1];           // EXT_OUT1
+  assign uo_out[3] = timer_out;            // Timer output
+  assign uo_out[4] = spi_periph_cs_n[2];   // CS_UART (from spi_periph, index 2)
+  assign uo_out[5] = spi_periph_cs_n[3];   // CS_ETH  (from spi_periph, index 3)
+  assign uo_out[6] = spi_periph_cs_n[1];   // CS_DAC  (from spi_periph, index 1)
+  assign uo_out[7] = spi_periph_cs_n[0];   // CS_ADC  (from spi_periph, index 0)
 
-  // SPI MISO input
-  assign spi_miso = ui_in[0];
+  // Bidirectional IOs
+  // uio_oe: 1=output, 0=input
+  // uio[2] is SPI_MISO (input), all others are outputs
+  assign uio_oe = 8'b11111011;
 
-  // Bidirectional IOs configured as outputs for debug
-  assign uio_oe  = 8'hFF;                // All outputs
-  assign uio_out = dbg_pc[7:0];          // Debug: PC low byte (for 16-bit PC)
+  assign uio_out[0] = spi_sclk_out;        // SPI_SCLK (shared)
+  assign uio_out[1] = spi_mosi_out;        // SPI_MOSI (shared)
+  assign uio_out[2] = 1'b0;                // SPI_MISO (input, drive low when output)
+  assign uio_out[3] = spi_mem_cs_flash_n & spi_periph_cs_n[5];  // CS_FLASH (either engine)
+  assign uio_out[4] = spi_periph_cs_n[4];  // CS_GPIO
+  assign uio_out[5] = spi_mem_cs_ram_n;    // CS_RAM (from spi_mem only)
+  assign uio_out[6] = 1'b1;                // Spare (inactive high)
+  assign uio_out[7] = 1'b1;                // Spare (inactive high)
 
-  // List all unused inputs to prevent warnings
-  wire _unused = &{ena, uio_in, io_out_internal, dbg_ac[15:4], dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_b, dbg_pc[15:8], 1'b0};
+  // ============================================================================
+  // Unused signals
+  // ============================================================================
+  wire _unused = &{ena, ui_in[7:4], uio_in[7:3], uio_in[1:0],
+                   dbg_ac, dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_b, dbg_pc, 1'b0};
 
 endmodule

@@ -1,0 +1,35 @@
+# Makefile for Interconnect Hub testing
+# Uses cocotb with Icarus Verilog
+
+SIM ?= icarus
+TOPLEVEL_LANG ?= verilog
+
+# Source files
+VERILOG_SOURCES += $(PWD)/../src/neander_x_alu.sv
+VERILOG_SOURCES += $(PWD)/../src/sequential_multiplier.sv
+VERILOG_SOURCES += $(PWD)/../src/sequential_divider.sv
+VERILOG_SOURCES += $(PWD)/../src/neander_x_datapath.sv
+VERILOG_SOURCES += $(PWD)/../src/neander_x_control_unit.sv
+VERILOG_SOURCES += $(PWD)/../src/top_cpu_neander_x.sv
+VERILOG_SOURCES += $(PWD)/../src/debug_rom.sv
+VERILOG_SOURCES += $(PWD)/../src/pwm.sv
+VERILOG_SOURCES += $(PWD)/../src/timer.sv
+VERILOG_SOURCES += $(PWD)/../src/irq_ctrl.sv
+VERILOG_SOURCES += $(PWD)/../src/spi_periph.sv
+VERILOG_SOURCES += $(PWD)/../src/interconnect_hub.sv
+VERILOG_SOURCES += $(PWD)/../src/spi_memory_controller.sv
+VERILOG_SOURCES += $(PWD)/../src/spi_sram_model.sv
+VERILOG_SOURCES += $(PWD)/interconnect_tb_wrapper.sv
+
+# Top level module
+TOPLEVEL = interconnect_tb_wrapper
+
+# Default test module
+MODULE ?= test_interconnect
+
+# Compilation flags
+COMPILE_ARGS += -g2012
+COMPILE_ARGS += -Wall
+
+# Include cocotb
+include $(shell cocotb-config --makefiles)/Makefile.sim
