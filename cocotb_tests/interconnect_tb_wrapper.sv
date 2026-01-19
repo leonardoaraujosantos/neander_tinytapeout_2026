@@ -30,7 +30,6 @@ module interconnect_tb_wrapper (
 
     // Peripheral outputs
     output logic        pwm_out,
-    output logic        timer_out,
     output logic [1:0]  ext_out,
 
     // I/O interface outputs
@@ -144,11 +143,9 @@ module interconnect_tb_wrapper (
     // Peripheral Outputs
     // ============================================================================
     logic        pwm_out_int;
-    logic        timer_out_int;
     logic [1:0]  ext_out_int;
 
     assign pwm_out = pwm_out_int;
-    assign timer_out = timer_out_int;
     assign ext_out = ext_out_int;
 
     // ============================================================================
@@ -227,9 +224,6 @@ module interconnect_tb_wrapper (
 
         // PWM output
         .pwm_out(pwm_out_int),
-
-        // Timer output
-        .timer_out(timer_out_int),
 
         // External I/O
         .ext_in(ext_in),
