@@ -636,10 +636,200 @@ For detailed protocol information, see [SPI SRAM Memory](docs/SPI_SRAM_MEMORY.md
 
 The SPI interface saves 11 pins while providing **2048x more memory** (64KB vs 32 bytes)!
 
+## Interconnect Hub
+
+The NEANDER-X processor includes an Interconnect/MMIO Hub that provides address decoding, peripheral management, and SPI bus arbitration for the TinyTapeout implementation.
+
+### System Block Diagram
+
+```
+                              TinyTapeout ASIC (Active Area)
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                     │
+│  ┌─────────────┐      ┌──────────────────────────────────────────────────────────┐  │
+│  │  NEANDER-X  │      │              INTERCONNECT HUB                            │  │
+│  │    CPU      │      │  ┌─────────────────────────────────────────────────────┐ │  │
+│  │             │      │  │ Address Decoder                                     │ │  │
+│  │ ┌─────────┐ │      │  │  0x0000-0xDFFF → RAM    (SPI_MEM, cs_select=0)     │ │  │
+│  │ │  ALU    │ │ mem  │  │  0xE000-0xEFFF → Flash  (SPI_MEM, cs_select=1)     │ │  │
+│  │ │ +−×÷   │ │ bus  │  │  0xF000-0xF0FF → MMIO   (internal registers)        │ │  │
+│  │ │ & | ^  │◄┼──────┼──┤  Boot Mode: 0x0000-0x00FF → Debug ROM               │ │  │
+│  │ └─────────┘ │      │  └─────────────────────────────────────────────────────┘ │  │
+│  │             │      │                                                          │  │
+│  │ Registers:  │      │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │  │
+│  │  AC, X, Y   │      │  │   PWM        │  │   Timer      │  │  IRQ Ctrl    │   │  │
+│  │  PC, SP, FP │      │  │ ──────────── │  │ ──────────── │  │ ──────────── │   │  │
+│  │  RI, REM    │      │  │ DIV, PERIOD  │  │ DIV, CMP     │  │ STATUS       │   │  │
+│  │             │      │  │ DUTY, CTRL   │  │ COUNT, CTRL  │  │ ENABLE, ACK  │   │  │
+│  │ Flags: NZC  │      │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘   │  │
+│  └─────────────┘      │         │                 │                 │           │  │
+│        │              │         │ pwm_out         │ timer_out       │ irq_in    │  │
+│        │ io_in/out    │         ▼                 ▼                 ▲           │  │
+│        └──────────────┼────►┌────────────────────────────────────────┐          │  │
+│                       │     │              I/O MUX                   │          │  │
+│                       │     └────────────────────────────────────────┘          │  │
+│                       │                                                          │  │
+│                       │  ┌────────────────────────┐  ┌────────────────────────┐ │  │
+│                       │  │   SPI Memory Engine    │  │  SPI Peripheral Engine │ │  │
+│                       │  │ ────────────────────── │  │ ────────────────────── │ │  │
+│                       │  │ • CPU mem operations   │  │ • Software-controlled  │ │  │
+│                       │  │ • READ/WRITE commands  │  │ • 6 CS lines           │ │  │
+│                       │  │ • 16-bit address       │  │ • Configurable mode    │ │  │
+│                       │  │ • PRIORITY: HIGH       │◄─┤ • PRIORITY: LOW        │ │  │
+│                       │  └───────────┬────────────┘  └───────────┬────────────┘ │  │
+│                       │              │                           │              │  │
+│                       └──────────────┼───────────────────────────┼──────────────┘  │
+│                                      │ SPI Bus                   │                 │
+│                                      │ (CS_RAM, CS_FLASH)        │ SPI Bus         │
+│                                      │                           │ (CS_ADC..GPIO)  │
+└──────────────────────────────────────┼───────────────────────────┼─────────────────┘
+                                       │                           │
+           TinyTapeout Pin Mapping     │                           │
+        ═══════════════════════════════╪═══════════════════════════╪═════════════════
+                                       │                           │
+                                       ▼                           ▼
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                              ACTIVE ACTIVE ACTIVE ACTIVE                             │
+│  ui_in[7:0]         ACTIVE ACTIVE ACTIVE ACTIVE ACTIVE ACTIVE                        │
+│  ┌─────────┐        uo_out[7:0]        uio[7:0]                                      │
+│  │ [0] ────┼─ SPI_MISO (from RAM)      ┌─────────┐          ┌─────────┐              │
+│  │ [1] ────┼─ EXT_IN0                  │ [0] ────┼─ CS_RAM  │ [0] ────┼─ PWM_OUT     │
+│  │ [2] ────┼─ EXT_IN1                  │ [1] ────┼─ SCLK    │ [1] ────┼─ TIMER_OUT   │
+│  │ [3] ────┼─ BOOT_SEL                 │ [2] ────┼─ MOSI    │ [2] ────┼─ EXT_OUT0    │
+│  │ [4] ────┼─ IRQ_EXT                  │ [3] ────┼─ CS_FLASH│ [3] ────┼─ CS_FLASH_P  │
+│  │ [5] ────┼─ (reserved)               │ [4] ────┼─ CS_UART │ [4] ────┼─ CS_GPIO     │
+│  │ [6] ────┼─ (reserved)               │ [5] ────┼─ CS_ETH  │ [5] ────┼─ SPI_P_SCLK  │
+│  │ [7] ────┼─ (reserved)               │ [6] ────┼─ CS_DAC  │ [6] ────┼─ SPI_P_MOSI  │
+│  └─────────┘                           │ [7] ────┼─ CS_ADC  │ [7] ────┼─ SPI_P_MISO  │
+│     ACTIVE                             └─────────┘          └─────────┘              │
+│                                           ACTIVE               ACTIVE                │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+                                       │                           │
+                                       ▼                           ▼
+     ┌───────────────────────┐    ┌───────────────────────┐   ┌───────────────────────┐
+     │      SPI SRAM         │    │      SPI Flash        │   │    SPI Peripherals    │
+     │   (e.g., 23LC512)     │    │   (e.g., W25Q128)     │   │                       │
+     │ ───────────────────── │    │ ───────────────────── │   │  ┌─────┐  ┌─────┐    │
+     │  • 64KB capacity      │    │  • 4KB-16MB capacity  │   │  │ ADC │  │ DAC │    │
+     │  • SPI Mode 0         │    │  • Read-only in boot  │   │  └─────┘  └─────┘    │
+     │                       │    │                       │   │  ┌─────┐  ┌─────┐    │
+     │  CS ◄── uo_out[0]     │    │  CS ◄── uo_out[3]     │   │  │UART │  │ ETH │    │
+     │  SCK◄── uo_out[1]     │    │  SCK◄── uo_out[1]     │   │  └─────┘  └─────┘    │
+     │  SI ◄── uo_out[2]     │    │  SI ◄── uo_out[2]     │   │  ┌─────┐  ┌───────┐  │
+     │  SO ──► ui_in[0]      │    │  SO ──► ui_in[0]      │   │  │GPIO │  │ FLASH │  │
+     └───────────────────────┘    └───────────────────────┘   │  └─────┘  └───────┘  │
+            ACTIVE                       ACTIVE               └───────────────────────┘
+         (Required)                    (Optional)                    (Optional)
+```
+
+### Data Flow
+
+```
+CPU Memory Access (LDA, STA, etc.):
+  CPU ──► Interconnect ──► Address Decode ──► SPI_MEM ──► SPI Bus ──► RAM/Flash
+                              │
+                              └──► MMIO ──► PWM/Timer/IRQ/SPI_PERIPH registers
+
+CPU I/O Access (IN, OUT):
+  CPU ◄──► Interconnect ──► I/O MUX ──► ext_in/ext_out pins
+                              │
+                              └──► io_status (IRQ_PENDING, SPI_MEM_BUSY, SPI_PERIPH_BUSY)
+```
+
+### Memory Map
+
+| Region | Address Range | Size | Description |
+|--------|---------------|------|-------------|
+| RAM | 0x0000-0xDFFF | 57KB | External SPI SRAM |
+| Flash | 0xE000-0xEFFF | 4KB | External SPI Flash (read-only) |
+| MMIO | 0xF000-0xF0FF | 256B | Memory-mapped I/O registers |
+| Reserved | 0xF100-0xFFFF | - | Reserved for future use |
+
+### Boot Mode
+
+When `BOOT_SEL=1` at reset, the internal Debug ROM is shadowed at addresses 0x0000-0x00FF. The Debug ROM contains a simple program that toggles `EXT_OUT0` indefinitely, useful for verifying chip operation without external programming.
+
+### MMIO Registers
+
+| Address | Name | Description |
+|---------|------|-------------|
+| 0xF000 | IRQ_STATUS | IRQ status (bit0=EXT, bit1=TMR, bit2=SPI) |
+| 0xF002 | IRQ_ENABLE | IRQ enable mask |
+| 0xF004 | IRQ_ACK | Write to acknowledge IRQs |
+| 0xF010 | PWM_CTRL | PWM control (bit0=enable) |
+| 0xF012 | PWM_DIV | PWM clock divider |
+| 0xF014 | PWM_PERIOD | PWM period |
+| 0xF016 | PWM_DUTY | PWM duty cycle |
+| 0xF020 | TMR_CTRL | Timer control (bit0=enable, bit1=clear) |
+| 0xF022 | TMR_DIV | Timer prescaler |
+| 0xF024 | TMR_COUNT | Timer counter (read-only) |
+| 0xF026 | TMR_CMP | Timer compare value |
+| 0xF028 | TMR_STATUS | Timer status (bit0=match) |
+| 0xF030 | SPI_CTRL | SPI peripheral control |
+| 0xF032 | SPI_DIV | SPI clock divider |
+| 0xF034 | SPI_SS | SPI slave select |
+| 0xF036 | SPI_TXRX | SPI TX/RX data register |
+| 0xF038 | SPI_STATUS | SPI status |
+
+### SPI Bus Arbitration
+
+The NEANDER-X uses two SPI engines sharing the same physical bus:
+
+1. **SPI_MEM**: Memory engine for RAM/Flash access (CPU memory operations)
+2. **SPI_PERIPH**: Peripheral engine for software-controlled SPI (ADC, DAC, etc.)
+
+**Arbitration Rules:**
+- **SPI_MEM has absolute priority** over SPI_PERIPH
+- When SPI_MEM is busy, SPI_PERIPH enters a `WAIT_ARB` state
+- SPI_PERIPH only starts a transfer when `spi_mem_busy = 0`
+
+```
+SPI_MEM_GRANT   = spi_mem_req            (always granted immediately)
+SPI_PERIPH_GRANT = spi_periph_req & ~spi_mem_busy  (waits for memory)
+```
+
+**Checking Bus Status:**
+The CPU can check arbitration status via the `IN` instruction reading `io_status`:
+
+| Bit | Signal | Description |
+|-----|--------|-------------|
+| 0 | IRQ_PENDING | At least one enabled IRQ is active |
+| 1 | SPI_MEM_BUSY | Memory engine is transferring |
+| 2 | SPI_PERIPH_BUSY | Peripheral engine is busy (or waiting) |
+
+**Typical usage pattern:**
+```assembly
+    ; Check if SPI peripheral is ready
+poll:
+    IN 0             ; Read io_status
+    AND #0x04        ; Mask SPI_PERIPH_BUSY bit
+    JNZ poll         ; Wait if busy
+
+    ; Now safe to start SPI peripheral transfer
+    LDI data
+    STA 0xF036       ; Write to SPI_TXRX starts transfer
+```
+
+### Peripheral Chip Selects
+
+The SPI peripheral engine supports 6 chip select lines for external devices:
+
+| CS | Signal | Pin | Description |
+|----|--------|-----|-------------|
+| 0 | CS_ADC | uo_out[7] | Analog-to-digital converter |
+| 1 | CS_DAC | uo_out[6] | Digital-to-analog converter |
+| 2 | CS_UART | uo_out[4] | UART bridge |
+| 3 | CS_ETH | uo_out[5] | Ethernet controller |
+| 4 | CS_GPIO | uio[4] | GPIO expander |
+| 5 | CS_FLASH | uio[3] | External Flash |
+
+For complete details, see [Interconnect Specification](docs/INTERCONNECT_SPEC.md).
+
 ## Documentation
 
 - [Project Info (TinyTapeout)](docs/info.md) - Pin interface and testing guide
 - [NEANDER CPU Guide](docs/NEANDER_cpu.md) - Complete architecture and implementation details
+- [Interconnect Specification](docs/INTERCONNECT_SPEC.md) - Detailed interconnect hub architecture
 - [Stack Extension](docs/NEANDER_X_STACK.md) - PUSH/POP/CALL/RET documentation
 - [16-bit Porting Guide](docs/PORTING_TO_16_BIT.md) - Details on 16-bit data width conversion
 - [SPI SRAM Memory](docs/SPI_SRAM_MEMORY.md) - External SPI SRAM protocol and compatible chips

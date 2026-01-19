@@ -69,10 +69,12 @@ module neander_tb_wrapper (
     // ============================================================================
     // SPI Controller <-> SPI SRAM Interface
     // ============================================================================
-    logic        spi_cs_n;
+    logic        spi_cs_ram_n;
+    logic        spi_cs_flash_n;
     logic        spi_sclk;
     logic        spi_mosi;
     logic        spi_miso;
+    logic        spi_busy;
 
     // ============================================================================
     // CPU Instantiation (16-bit address)
@@ -121,8 +123,13 @@ module neander_tb_wrapper (
         .mem_rdata(cpu_mem_data_in_int),
         .mem_ready(cpu_mem_ready_int),
 
+        // CS select (always RAM for this basic wrapper)
+        .cs_select(1'b0),
+        .spi_busy(spi_busy),
+
         // SPI Interface (to SPI SRAM model)
-        .spi_cs_n(spi_cs_n),
+        .spi_cs_ram_n(spi_cs_ram_n),
+        .spi_cs_flash_n(spi_cs_flash_n),
         .spi_sclk(spi_sclk),
         .spi_mosi(spi_mosi),
         .spi_miso(spi_miso)
@@ -132,7 +139,7 @@ module neander_tb_wrapper (
     // SPI SRAM Model (64KB for simulation)
     // ============================================================================
     spi_sram_model spi_ram (
-        .spi_cs_n(spi_cs_n),
+        .spi_cs_n(spi_cs_ram_n),
         .spi_sclk(spi_sclk),
         .spi_mosi(spi_mosi),
         .spi_miso(spi_miso)

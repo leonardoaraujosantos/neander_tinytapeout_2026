@@ -12,6 +12,10 @@
 //
 // Timing: SPI clock = clk/2 (half-speed), each byte takes 16 CPU cycles
 // Total: ~5 bytes = ~80 CPU cycles per 16-bit access
+//
+// Extended for Interconnect Hub:
+//   - cs_select: 0 = RAM, 1 = Flash (determines which CS line is activated)
+//   - spi_busy: 1 when SPI transaction is in progress (for arbitration)
 // ============================================================================
 
 module spi_memory_controller (
@@ -26,11 +30,18 @@ module spi_memory_controller (
     output logic [15:0] mem_rdata,    // Read data (16-bit)
     output logic        mem_ready,    // Access complete (1 cycle pulse)
 
+    // Chip select control (from interconnect hub)
+    input  logic        cs_select,    // 0 = RAM (CS_RAM), 1 = Flash (CS_FLASH)
+
+    // Status output (for arbitration)
+    output logic        spi_busy,     // 1 = SPI transaction in progress
+
     // SPI Interface
-    output logic        spi_cs_n,     // Chip select (active low)
-    output logic        spi_sclk,     // Serial clock
-    output logic        spi_mosi,     // Master Out Slave In
-    input  logic        spi_miso      // Master In Slave Out
+    output logic        spi_cs_ram_n,   // Chip select for RAM (active low)
+    output logic        spi_cs_flash_n, // Chip select for Flash (active low)
+    output logic        spi_sclk,       // Serial clock
+    output logic        spi_mosi,       // Master Out Slave In
+    input  logic        spi_miso        // Master In Slave Out
 );
 
     // State machine states
@@ -58,6 +69,17 @@ module spi_memory_controller (
     logic [15:0] addr_latch;       // Latched address (16-bit)
     logic [15:0] wdata_latch;      // Latched write data (16-bit)
     logic [7:0]  rdata_lo;         // Received low byte
+    logic        cs_latch;         // Latched CS select (0=RAM, 1=Flash)
+
+    // Internal chip select (active during transaction)
+    logic        spi_cs_active;
+
+    // Busy signal - active when not in IDLE state
+    assign spi_busy = (state != IDLE);
+
+    // Chip select outputs - active low, selected by cs_latch
+    assign spi_cs_ram_n   = ~(spi_cs_active && ~cs_latch);
+    assign spi_cs_flash_n = ~(spi_cs_active && cs_latch);
 
     // SPI clock generation (clk/2)
     // SCLK toggles every CPU cycle when active
@@ -78,28 +100,29 @@ module spi_memory_controller (
     // Sequential logic for SPI operation
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
-            spi_cs_n    <= 1'b1;
-            spi_sclk    <= 1'b0;
-            mem_ready   <= 1'b0;
-            mem_rdata   <= 16'h0000;
-            bit_cnt     <= 3'd0;
-            shift_out   <= 8'h00;
-            shift_in    <= 8'h00;
-            sclk_phase  <= 1'b0;
-            is_write    <= 1'b0;
-            addr_latch  <= 16'h0000;
-            wdata_latch <= 16'h0000;
-            rdata_lo    <= 8'h00;
+            spi_cs_active <= 1'b0;
+            spi_sclk      <= 1'b0;
+            mem_ready     <= 1'b0;
+            mem_rdata     <= 16'h0000;
+            bit_cnt       <= 3'd0;
+            shift_out     <= 8'h00;
+            shift_in      <= 8'h00;
+            sclk_phase    <= 1'b0;
+            is_write      <= 1'b0;
+            addr_latch    <= 16'h0000;
+            wdata_latch   <= 16'h0000;
+            rdata_lo      <= 8'h00;
+            cs_latch      <= 1'b0;
         end else begin
             // Default: clear ready pulse
             mem_ready <= 1'b0;
 
             case (state)
                 IDLE: begin
-                    spi_cs_n   <= 1'b1;
-                    spi_sclk   <= 1'b0;
-                    sclk_phase <= 1'b0;
-                    bit_cnt    <= 3'd7;
+                    spi_cs_active <= 1'b0;
+                    spi_sclk      <= 1'b0;
+                    sclk_phase    <= 1'b0;
+                    bit_cnt       <= 3'd7;
                     // Wait for mem_req, then go to ADDR_LATCH to let address stabilize
                 end
 
@@ -108,8 +131,9 @@ module spi_memory_controller (
                     is_write    <= mem_we;
                     addr_latch  <= mem_addr;
                     wdata_latch <= mem_wdata;
+                    cs_latch    <= cs_select;  // Latch CS select (0=RAM, 1=Flash)
                     // Start transaction
-                    spi_cs_n    <= 1'b0;
+                    spi_cs_active <= 1'b1;
                     // Load command: 0x03 for read, 0x02 for write
                     shift_out   <= mem_we ? 8'h02 : 8'h03;
                 end
@@ -180,13 +204,13 @@ module spi_memory_controller (
                 end
 
                 DONE: begin
-                    spi_cs_n  <= 1'b1;
-                    spi_sclk  <= 1'b0;
-                    mem_ready <= 1'b1;  // Pulse ready for one cycle
+                    spi_cs_active <= 1'b0;
+                    spi_sclk      <= 1'b0;
+                    mem_ready     <= 1'b1;  // Pulse ready for one cycle
                 end
 
                 default: begin
-                    spi_cs_n <= 1'b1;
+                    spi_cs_active <= 1'b0;
                 end
             endcase
         end
