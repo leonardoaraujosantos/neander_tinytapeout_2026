@@ -61,9 +61,6 @@ module interconnect_hub (
     // PWM output
     output wire        pwm_out,
 
-    // Timer output
-    output wire        timer_out,
-
     // External I/O pins
     input  wire [1:0]  ext_in,        // EXT_IN0, EXT_IN1
     output wire [1:0]  ext_out,       // EXT_OUT0, EXT_OUT1
@@ -124,11 +121,6 @@ module interconnect_hub (
     localparam ADDR_PWM_DIV     = 8'h12;  // 0xF012
     localparam ADDR_PWM_PERIOD  = 8'h14;  // 0xF014
     localparam ADDR_PWM_DUTY    = 8'h16;  // 0xF016
-    localparam ADDR_TMR_CTRL    = 8'h20;  // 0xF020
-    localparam ADDR_TMR_DIV     = 8'h22;  // 0xF022
-    localparam ADDR_TMR_COUNT   = 8'h24;  // 0xF024
-    localparam ADDR_TMR_CMP     = 8'h26;  // 0xF026
-    localparam ADDR_TMR_STATUS  = 8'h28;  // 0xF028
     localparam ADDR_SPI_CTRL    = 8'h30;  // 0xF030
     localparam ADDR_SPI_DIV     = 8'h32;  // 0xF032
     localparam ADDR_SPI_SS      = 8'h34;  // 0xF034
@@ -143,9 +135,6 @@ module interconnect_hub (
     reg [15:0] reg_pwm_div;
     reg [15:0] reg_pwm_period;
     reg [15:0] reg_pwm_duty;
-    reg [15:0] reg_tmr_ctrl;
-    reg [15:0] reg_tmr_div;
-    reg [15:0] reg_tmr_cmp;
     reg [15:0] reg_spi_ctrl;
     reg [15:0] reg_spi_div;
     reg [15:0] reg_spi_ss;
@@ -161,9 +150,6 @@ module interconnect_hub (
             reg_pwm_div    <= 16'h0001;
             reg_pwm_period <= 16'hFFFF;
             reg_pwm_duty   <= 16'h0000;
-            reg_tmr_ctrl   <= 16'h0000;
-            reg_tmr_div    <= 16'h0001;
-            reg_tmr_cmp    <= 16'hFFFF;
             reg_spi_ctrl   <= 16'h0020;  // AUTO_CS=1 by default
             reg_spi_div    <= 16'h0001;
             reg_spi_ss     <= 16'h0000;
@@ -174,9 +160,6 @@ module interconnect_hub (
                 ADDR_PWM_DIV:     reg_pwm_div    <= cpu_mem_data_out;
                 ADDR_PWM_PERIOD:  reg_pwm_period <= cpu_mem_data_out;
                 ADDR_PWM_DUTY:    reg_pwm_duty   <= cpu_mem_data_out;
-                ADDR_TMR_CTRL:    reg_tmr_ctrl   <= cpu_mem_data_out;
-                ADDR_TMR_DIV:     reg_tmr_div    <= cpu_mem_data_out;
-                ADDR_TMR_CMP:     reg_tmr_cmp    <= cpu_mem_data_out;
                 ADDR_SPI_CTRL:    reg_spi_ctrl   <= cpu_mem_data_out;
                 ADDR_SPI_DIV:     reg_spi_div    <= cpu_mem_data_out;
                 ADDR_SPI_SS:      reg_spi_ss     <= cpu_mem_data_out;
@@ -185,28 +168,12 @@ module interconnect_hub (
         end
     end
 
-    // Self-clearing bits in TMR_CTRL
-    wire tmr_clear_req = mmio_write && (mmio_addr == ADDR_TMR_CTRL) && cpu_mem_data_out[1];
-    reg  tmr_clear_pulse;
-
-    always @(posedge clk or posedge reset) begin
-        if (reset) begin
-            tmr_clear_pulse <= 1'b0;
-        end else begin
-            tmr_clear_pulse <= tmr_clear_req;
-        end
-    end
-
-    // Timer control with CLEAR bit masked out (it's self-clearing)
-    wire [15:0] tmr_ctrl_effective = {reg_tmr_ctrl[15:2], tmr_clear_pulse, reg_tmr_ctrl[0]};
-
     // ========================================================================
     // IRQ Controller
     // ========================================================================
     wire [15:0] irq_status;
     wire [15:0] irq_enable_out;
     wire        irq_pending;
-    wire        tmr_irq;
     wire        spi_done_irq;
     wire        irq_ack_write = mmio_write && (mmio_addr == ADDR_IRQ_ACK);
 
@@ -214,7 +181,7 @@ module interconnect_hub (
         .clk(clk),
         .reset(reset),
         .irq_in(irq_in),
-        .tmr_irq(tmr_irq),
+        .tmr_irq(1'b0),  // Timer removed
         .spi_irq(spi_done_irq),
         .irq_enable_in(reg_irq_enable),
         .irq_ack_in(cpu_mem_data_out),
@@ -236,26 +203,6 @@ module interconnect_hub (
         .pwm_period(reg_pwm_period),
         .pwm_duty(reg_pwm_duty),
         .pwm_out(pwm_out)
-    );
-
-    // ========================================================================
-    // Timer
-    // ========================================================================
-    wire [15:0] tmr_status;
-    wire [15:0] tmr_count;
-    wire        tmr_status_ack = mmio_write && (mmio_addr == ADDR_TMR_STATUS) && cpu_mem_data_out[0];
-
-    timer u_timer (
-        .clk(clk),
-        .reset(reset),
-        .tmr_ctrl(tmr_ctrl_effective),
-        .tmr_div(reg_tmr_div),
-        .tmr_cmp(reg_tmr_cmp),
-        .status_ack(tmr_status_ack),
-        .tmr_status(tmr_status),
-        .tmr_count(tmr_count),
-        .tmr_irq(tmr_irq),
-        .timer_out(timer_out)
     );
 
     // ========================================================================
@@ -300,11 +247,6 @@ module interconnect_hub (
             ADDR_PWM_DIV:     mmio_rdata = reg_pwm_div;
             ADDR_PWM_PERIOD:  mmio_rdata = reg_pwm_period;
             ADDR_PWM_DUTY:    mmio_rdata = reg_pwm_duty;
-            ADDR_TMR_CTRL:    mmio_rdata = reg_tmr_ctrl;
-            ADDR_TMR_DIV:     mmio_rdata = reg_tmr_div;
-            ADDR_TMR_COUNT:   mmio_rdata = tmr_count;
-            ADDR_TMR_CMP:     mmio_rdata = reg_tmr_cmp;
-            ADDR_TMR_STATUS:  mmio_rdata = tmr_status;
             ADDR_SPI_CTRL:    mmio_rdata = reg_spi_ctrl;
             ADDR_SPI_DIV:     mmio_rdata = reg_spi_div;
             ADDR_SPI_SS:      mmio_rdata = reg_spi_ss;

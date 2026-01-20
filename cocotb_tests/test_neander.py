@@ -89,9 +89,6 @@ class Op:
     ORX  = 0x42  # ORX: AC = AC | X
     ANDX = 0x52  # ANDX: AC = AC & X
     XORX = 0x43  # XORX: AC = AC ^ X
-    # LCC Extension: Swap instructions
-    SWPX = 0x1A  # SWPX: Swap AC <-> X
-    SWPY = 0x1B  # SWPY: Swap AC <-> Y
     # Indexed addressing modes (X)
     LDA_X = 0x21  # LDA addr,X: AC = MEM[addr + X]
     STA_X = 0x11  # STA addr,X: MEM[addr + X] = AC
@@ -118,16 +115,12 @@ class Op:
     # Unsigned comparison jumps (after CMP)
     JBE  = 0x86  # JBE addr: jump if below or equal (C=1 OR Z=1)
     JA   = 0x87  # JA addr: jump if above (C=0 AND Z=0)
-    DECJNZ = 0x88  # DECJNZ addr: DEC AC; jump if not zero
     JN   = 0x90
     JZ   = 0xA0
     JNZ  = 0xB0
     IN   = 0xC0
     OUT  = 0xD0
     LDI  = 0xE0
-    CMPI = 0xE1  # CMPI imm: compare AC with immediate
-    MULI = 0xE2  # MULI imm: AC = AC * imm
-    DIVI = 0xE3  # DIVI imm: AC = AC / imm, Y = AC % imm
     HLT  = 0xF0
 
 
@@ -177,7 +170,6 @@ MEMORY_ADDRESS_OPCODES = {
     0x85,  # JGE
     0x86,  # JBE
     0x87,  # JA
-    0x88,  # DECJNZ
     0x90,  # JN
     0xA0,  # JZ
     0xB0,  # JNZ
@@ -195,7 +187,6 @@ JUMP_OPCODES = {
     0x85,  # JGE
     0x86,  # JBE
     0x87,  # JA
-    0x88,  # DECJNZ
     0x90,  # JN
     0xA0,  # JZ
     0xB0,  # JNZ
@@ -205,9 +196,6 @@ JUMP_OPCODES = {
 # Opcodes that take a 16-bit immediate value (expand from 2 to 3 bytes)
 IMMEDIATE_16BIT_OPCODES = {
     0xE0,  # LDI (16-bit immediate)
-    0xE1,  # CMPI (16-bit immediate comparison)
-    0xE2,  # MULI (16-bit immediate multiply)
-    0xE3,  # DIVI (16-bit immediate divide)
     0x7C,  # LDXI (16-bit immediate)
     0x06,  # LDYI (16-bit immediate)
 }
@@ -7315,178 +7303,4 @@ async def test_xorx_instruction(dut):
     expected = 0xFF
     dut._log.info(f"XORX test: result=0x{result:02X}, expected=0x{expected:02X}")
     assert result == expected, f"Expected 0x{expected:02X}, got 0x{result:02X}"
-    dut._log.info("Test PASSED!")
-
-
-@cocotb.test()
-async def test_swpx_instruction(dut):
-    """Test SWPX: Swap AC <-> X"""
-    tb = NeanderTestbench(dut)
-    await tb.setup()
-
-    program = [
-        Op.LDI, 42,      # AC = 42
-        Op.LDXI, 99,     # X = 99
-        Op.SWPX,         # Swap: AC = 99, X = 42
-        Op.OUT, 0x00,    # Output AC (should be 99)
-        Op.TXA,          # AC = X = 42
-        Op.OUT, 0x00,    # Output AC (should be 42)
-        Op.HLT,
-    ]
-    await tb.load_program(program)
-    await tb.reset()
-
-    result1 = await tb.wait_for_io_write(max_cycles=10000)
-    dut._log.info(f"SWPX test: first output={result1}, expected=99")
-    assert result1 == 99, f"Expected 99, got {result1}"
-
-    result2 = await tb.wait_for_io_write(max_cycles=10000)
-    dut._log.info(f"SWPX test: second output={result2}, expected=42")
-    assert result2 == 42, f"Expected 42, got {result2}"
-    dut._log.info("Test PASSED!")
-
-
-@cocotb.test()
-async def test_swpy_instruction(dut):
-    """Test SWPY: Swap AC <-> Y"""
-    tb = NeanderTestbench(dut)
-    await tb.setup()
-
-    program = [
-        Op.LDI, 55,      # AC = 55
-        Op.LDYI, 77,     # Y = 77
-        Op.SWPY,         # Swap: AC = 77, Y = 55
-        Op.OUT, 0x00,    # Output AC (should be 77)
-        Op.TYA,          # AC = Y = 55
-        Op.OUT, 0x00,    # Output AC (should be 55)
-        Op.HLT,
-    ]
-    await tb.load_program(program)
-    await tb.reset()
-
-    result1 = await tb.wait_for_io_write(max_cycles=10000)
-    dut._log.info(f"SWPY test: first output={result1}, expected=77")
-    assert result1 == 77, f"Expected 77, got {result1}"
-
-    result2 = await tb.wait_for_io_write(max_cycles=10000)
-    dut._log.info(f"SWPY test: second output={result2}, expected=55")
-    assert result2 == 55, f"Expected 55, got {result2}"
-    dut._log.info("Test PASSED!")
-
-
-@cocotb.test()
-async def test_cmpi_instruction(dut):
-    """Test CMPI: Compare AC with immediate (sets flags, doesn't modify AC)"""
-    tb = NeanderTestbench(dut)
-    await tb.setup()
-
-    # Test: AC=50, compare with 30 -> should be positive (N=0, Z=0)
-    # Then JGT should be taken
-    program = [
-        Op.LDI, 50,         # AC = 50
-        Op.CMPI, 30,        # Compare AC with 30 (50 - 30 = 20, positive)
-        Op.JGT, 0x10,       # Jump to 0x10 if AC > 30
-        Op.LDI, 0,          # Should not reach here
-        Op.OUT, 0x00,
-        Op.HLT,
-        # Padding
-        Op.NOP, Op.NOP, Op.NOP, Op.NOP,
-        Op.NOP, Op.NOP, Op.NOP, Op.NOP,
-        # Address 0x10:
-        Op.LDI, 99,         # Success: AC = 99
-        Op.OUT, 0x00,
-        Op.HLT,
-    ]
-    await tb.load_program(program)
-    await tb.reset()
-
-    result = await tb.wait_for_io_write(max_cycles=15000)
-    expected = 99
-    dut._log.info(f"CMPI test: result={result}, expected={expected}")
-    assert result == expected, f"Expected {expected}, got {result}"
-    dut._log.info("Test PASSED!")
-
-
-@cocotb.test()
-async def test_muli_instruction(dut):
-    """Test MULI: AC = AC * immediate"""
-    tb = NeanderTestbench(dut)
-    await tb.setup()
-
-    program = [
-        Op.LDI, 6,       # AC = 6
-        Op.MULI, 7,      # AC = 6 * 7 = 42
-        Op.OUT, 0x00,
-        Op.HLT,
-    ]
-    await tb.load_program(program)
-    await tb.reset()
-
-    result = await tb.wait_for_io_write(max_cycles=10000)
-    expected = 42
-    dut._log.info(f"MULI test: result={result}, expected={expected}")
-    assert result == expected, f"Expected {expected}, got {result}"
-    dut._log.info("Test PASSED!")
-
-
-@cocotb.test()
-async def test_divi_instruction(dut):
-    """Test DIVI: AC = AC / immediate, Y = AC % immediate"""
-    tb = NeanderTestbench(dut)
-    await tb.setup()
-
-    program = [
-        Op.LDI, 47,      # AC = 47
-        Op.DIVI, 5,      # AC = 47 / 5 = 9, Y = 47 % 5 = 2
-        Op.OUT, 0x00,    # Output quotient (9)
-        Op.TYA,          # AC = Y = 2 (remainder)
-        Op.OUT, 0x00,    # Output remainder (2)
-        Op.HLT,
-    ]
-    await tb.load_program(program)
-    await tb.reset()
-
-    result1 = await tb.wait_for_io_write(max_cycles=10000)
-    dut._log.info(f"DIVI test: quotient={result1}, expected=9")
-    assert result1 == 9, f"Expected 9, got {result1}"
-
-    result2 = await tb.wait_for_io_write(max_cycles=10000)
-    dut._log.info(f"DIVI test: remainder={result2}, expected=2")
-    assert result2 == 2, f"Expected 2, got {result2}"
-    dut._log.info("Test PASSED!")
-
-
-@cocotb.test()
-async def test_decjnz_instruction(dut):
-    """Test DECJNZ: Decrement AC and jump if not zero (loop counter)"""
-    tb = NeanderTestbench(dut)
-    await tb.setup()
-
-    # Count down from 5 to 0, accumulating sum in memory
-    ADDR_SUM = 0x80
-    LOOP_ADDR = 0x06
-
-    program = [
-        Op.LDI, 0,          # AC = 0
-        Op.STA, ADDR_SUM,   # MEM[0x80] = 0
-        Op.LDI, 5,          # AC = 5 (counter)
-        # LOOP at 0x06:
-        Op.PUSH,            # Save counter
-        Op.LDA, ADDR_SUM,   # Load sum
-        Op.INC,             # Increment sum
-        Op.STA, ADDR_SUM,   # Store sum
-        Op.POP,             # Restore counter
-        Op.DECJNZ, LOOP_ADDR,  # Decrement and loop if not zero
-        # When done, AC = 0, sum should be 5
-        Op.LDA, ADDR_SUM,   # Load final sum
-        Op.OUT, 0x00,
-        Op.HLT,
-    ]
-    await tb.load_program(program)
-    await tb.reset()
-
-    result = await tb.wait_for_io_write(max_cycles=30000)
-    expected = 5  # Loop runs 5 times
-    dut._log.info(f"DECJNZ test: result={result}, expected={expected}")
-    assert result == expected, f"Expected {expected}, got {result}"
     dut._log.info("Test PASSED!")

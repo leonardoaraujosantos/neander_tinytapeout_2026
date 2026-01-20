@@ -118,12 +118,6 @@ module neander_control (
     output logic       y_to_ac,     // Transfer Y to AC (TYA)
     output logic       indexed_mode_y, // Use indexed addressing (addr + Y)
     output logic       mul_to_y,    // Load Y with MUL high byte
-    // B Register Extension signals
-    output logic       b_load,      // Load B register
-    output logic       b_inc,       // Increment B register
-    output logic       b_dec,       // Decrement B register (DEB)
-    output logic       b_to_ac,     // Transfer B to AC (TBA)
-    output logic       b_from_temp, // Load B from swap temp (for SWPB)
     // Frame Pointer Extension signals
     output logic       fp_load,      // Load FP full 16-bit (for TSF)
     output logic       fp_load_lo,   // Load FP low byte (for POP_FP)
@@ -210,19 +204,9 @@ module neander_control (
         S_ORX,                                 // ORX  (0x42) - AC = AC | X
         S_ANDX,                                // ANDX (0x52) - AC = AC & X
         S_XORX,                                // XORX (0x43) - AC = AC ^ X
-        // Compare Immediate
-        S_CMPI_1, S_CMPI_2,                    // CMPI imm (0xE1) - compare AC with immediate
-        // Multiply/Divide Immediate
-        S_MULI_1, S_MULI_2, S_MULI_WAIT,       // MULI imm (0xE2) - AC = AC * imm - sequential
-        S_DIVI_1, S_DIVI_2,                    // DIVI imm (0xE3) - AC = AC / imm
-        // Decrement and jump if not zero - with 16-bit target address
-        S_DECJNZ_1, S_DECJNZ_2, S_DECJNZ_2B, S_DECJNZ_2C, S_DECJNZ_3,
         // SP-relative addressing states - with 16-bit offset
         S_LDA_SP_1, S_LDA_SP_2, S_LDA_SP_2B, S_LDA_SP_2C, S_LDA_SP_3, S_LDA_SP_4, // LDA off,SP (0x28)
         S_STA_SP_1, S_STA_SP_2, S_STA_SP_2B, S_STA_SP_2C, S_STA_SP_3, S_STA_SP_4, // STA off,SP (0x17)
-        // Swap instructions (2-cycle each)
-        S_SWPX_1, S_SWPX_2,                    // SWPX (0x1A) - swap AC <-> X
-        S_SWPY_1, S_SWPY_2,                    // SWPY (0x1B) - swap AC <-> Y
         // Indirect addressing states - LDA (addr) - AC = MEM[MEM[addr]]
         // 10 states: fetch ptr addr (5), fetch target addr (4), fetch data (1)
         S_LDA_IND_1, S_LDA_IND_2, S_LDA_IND_2B, S_LDA_IND_2C, S_LDA_IND_3,
@@ -266,7 +250,6 @@ module neander_control (
         S_MUL, S_MUL_WAIT,                            // MUL (0x09) - AC * X -> Y:AC - sequential
         S_DIV, S_DIV_WAIT,                            // DIV (0x0E) - AC / X -> AC (quotient), Y (remainder) - sequential
         S_MOD, S_MOD_WAIT,                            // MOD (0x0F) - AC % X -> AC (remainder), Y (quotient) - sequential
-        S_DIVI_WAIT,                                  // DIVI wait state for sequential divider
         // Multi-byte arithmetic (ADC, SBC) with 16-bit address
         S_ADC_1, S_ADC_2, S_ADC_2B, S_ADC_2C, S_ADC_3, S_ADC_4,
         S_SBC_1, S_SBC_2, S_SBC_2B, S_SBC_2C, S_SBC_3, S_SBC_4,
@@ -281,17 +264,6 @@ module neander_control (
         // Indexed addressing states (FP) - with 16-bit base address
         S_LDA_FP_1, S_LDA_FP_2, S_LDA_FP_2B, S_LDA_FP_2C, S_LDA_FP_3, S_LDA_FP_4,
         S_STA_FP_1, S_STA_FP_2, S_STA_FP_2B, S_STA_FP_2C, S_STA_FP_3, S_STA_FP_4,
-        // B Register Extension states
-        S_TAB,                                 // TAB (0x1C) - single cycle
-        S_TBA,                                 // TBA (0x1D) - single cycle
-        S_LDB_1, S_LDB_2, S_LDB_2B, S_LDB_2C, S_LDB_3, S_LDB_4, // LDB addr (0x1E)
-        S_STB_1, S_STB_2, S_STB_2B, S_STB_2C, S_STB_3, S_STB_4, // STB addr (0x1F)
-        S_INB,                                 // INB (0x36) - single cycle
-        S_DEB,                                 // DEB (0x37) - single cycle
-        S_SWPB_1, S_SWPB_2,                    // SWPB (0x38) - swap AC <-> B
-        S_ADDB,                                // ADDB (0x39) - AC = AC + B
-        S_SUBB,                                // SUBB (0x3A) - AC = AC - B
-        S_LDBI_1, S_LDBI_2,                    // LDBI imm (0xE4)
         // PUSH_ADDR and POP_ADDR states
         S_PUSH_ADDR_1, S_PUSH_ADDR_2, S_PUSH_ADDR_2B, S_PUSH_ADDR_2C, S_PUSH_ADDR_3, S_PUSH_ADDR_4, S_PUSH_ADDR_5, S_PUSH_ADDR_6, S_PUSH_ADDR_7, // PUSH_ADDR (0x89)
         S_POP_ADDR_1, S_POP_ADDR_2, S_POP_ADDR_2B, S_POP_ADDR_2C, S_POP_ADDR_3, S_POP_ADDR_4, S_POP_ADDR_5, S_POP_ADDR_6, S_POP_ADDR_7, // POP_ADDR (0x8A)
@@ -345,12 +317,6 @@ module neander_control (
         y_to_ac      = '0;
         indexed_mode_y = '0;
         mul_to_y     = '0;
-        // B Register Extension defaults
-        b_load       = '0;
-        b_inc        = '0;
-        b_dec        = '0;
-        b_to_ac      = '0;
-        b_from_temp  = '0;
         // Frame Pointer Extension defaults
         fp_load      = '0;
         fp_load_lo   = '0;  // Load FP low byte (for POP_FP)
@@ -442,7 +408,7 @@ module neander_control (
                     end
                     4'h1: begin
                         // STA: check sub_opcode for indexed mode and indirect
-                        // Also DEX/DEY/SWPX/SWPY/TAB/TBA/LDB/STB in this opcode family
+                        // Also DEX/DEY/SWPX/SWPY in this opcode family
                         case (sub_opcode)
                             4'h0: next_state = S_STA_1;     // STA addr (0x10)
                             4'h1: next_state = S_STA_X_1;   // STA addr,X (0x11)
@@ -452,16 +418,11 @@ module neander_control (
                             4'h7: next_state = S_STA_SP_1;  // STA off,SP (0x17)
                             4'h8: next_state = S_DEX;       // DEX (0x18)
                             4'h9: next_state = S_DEY;       // DEY (0x19)
-                            4'hA: next_state = S_SWPX_1;    // SWPX (0x1A) - Swap AC <-> X
-                            4'hB: next_state = S_SWPY_1;    // SWPY (0x1B) - Swap AC <-> Y
-                            4'hC: next_state = S_TAB;       // TAB (0x1C) - B = AC
-                            4'hD: next_state = S_TBA;       // TBA (0x1D) - AC = B
-                            4'hE: next_state = S_LDB_1;     // LDB addr (0x1E)
-                            4'hF: next_state = S_STB_1;     // STB addr (0x1F)
+                            // 0x1A (SWPX) and 0x1B (SWPY) removed - unused by LCC
                             default: next_state = S_STA_1;
                         endcase
                     end
-                    4'h3: begin  // ADD family: 0x30=ADD, 0x31=ADC, 0x32=ADDX, 0x33=SUBX, 0x34=ADDY, 0x35=SUBY, 0x36=INB, 0x37=DEB, 0x38=SWPB, 0x39=ADDB, 0x3A=SUBB
+                    4'h3: begin  // ADD family: 0x30=ADD, 0x31=ADC, 0x32=ADDX, 0x33=SUBX, 0x34=ADDY, 0x35=SUBY
                         case (sub_opcode)
                             4'h0: next_state = S_ADD_1;   // ADD addr (0x30)
                             4'h1: next_state = S_ADC_1;   // ADC addr (0x31)
@@ -469,11 +430,6 @@ module neander_control (
                             4'h3: next_state = S_SUBX;    // SUBX (0x33) - AC = AC - X
                             4'h4: next_state = S_ADDY;    // ADDY (0x34) - AC = AC + Y
                             4'h5: next_state = S_SUBY;    // SUBY (0x35) - AC = AC - Y
-                            4'h6: next_state = S_INB;     // INB (0x36) - B = B + 1
-                            4'h7: next_state = S_DEB;     // DEB (0x37) - B = B - 1
-                            4'h8: next_state = S_SWPB_1;  // SWPB (0x38) - Swap AC <-> B
-                            4'h9: next_state = S_ADDB;    // ADDB (0x39) - AC = AC + B
-                            4'hA: next_state = S_SUBB;    // SUBB (0x3A) - AC = AC - B
                             default: next_state = S_ADD_1;
                         endcase
                     end
@@ -522,7 +478,7 @@ module neander_control (
                             default: next_state = S_FETCH_1;
                         endcase
                     end
-                    4'h8: begin  // JMP family + carry-based jumps + comparison jumps + DECJNZ + PUSH_ADDR/POP_ADDR
+                    4'h8: begin  // JMP family + carry-based jumps + comparison jumps + PUSH_ADDR/POP_ADDR
                         case (sub_opcode)
                             4'h0: next_state = S_JMP_1;     // JMP  (0x80)
                             4'h1: next_state = S_JC_1;      // JC   (0x81)
@@ -534,7 +490,7 @@ module neander_control (
                             // Unsigned comparison jumps (after CMP)
                             4'h6: next_state = S_JBE_1;     // JBE  (0x86)
                             4'h7: next_state = S_JA_1;      // JA   (0x87)
-                            4'h8: next_state = S_DECJNZ_1;  // DECJNZ (0x88)
+                            // 0x88 (DECJNZ) removed - unused by LCC
                             4'h9: next_state = S_PUSH_ADDR_1; // PUSH_ADDR (0x89) - MEM[--SP] = MEM[addr]
                             4'hA: next_state = S_POP_ADDR_1;  // POP_ADDR (0x8A) - MEM[addr] = MEM[SP++]
                             default: next_state = S_JMP_1;  // Default to JMP for backward compat
@@ -543,15 +499,8 @@ module neander_control (
                     4'h9: next_state = S_JN_1;
                     4'hA: next_state = S_JZ_1;
                     4'hB: next_state = S_JNZ_1;
-                    4'hE: begin  // LDI family: 0xE0=LDI, 0xE1=CMPI, 0xE2=MULI, 0xE3=DIVI, 0xE4=LDBI
-                        case (sub_opcode)
-                            4'h0: next_state = S_LDI_1;    // LDI imm (0xE0)
-                            4'h1: next_state = S_CMPI_1;   // CMPI imm (0xE1)
-                            4'h2: next_state = S_MULI_1;   // MULI imm (0xE2)
-                            4'h3: next_state = S_DIVI_1;   // DIVI imm (0xE3)
-                            4'h4: next_state = S_LDBI_1;   // LDBI imm (0xE4) - B = immediate
-                            default: next_state = S_LDI_1;
-                        endcase
+                    4'hE: begin  // LDI family: 0xE0=LDI (0xE1-0xE3 removed - unused by LCC)
+                        next_state = S_LDI_1;    // LDI imm (0xE0)
                     end
                     4'hC: next_state = S_IN_1;
                     4'hD: next_state = S_OUT_1;
@@ -1256,40 +1205,6 @@ module neander_control (
             end
 
             // ================================================================
-            // SWAP INSTRUCTIONS
-            // ================================================================
-
-            // --- SWPX (0x1A) ---
-            // Swap AC and X: temp = AC; AC = X; X = temp (2 cycles)
-            S_SWPX_1: begin
-                swap_temp_load = 1;  // Save AC to temp register
-                x_to_ac = 1;         // Load X value to AC
-                ac_load = 1;         // Enable AC load
-                nz_load = 1;         // Update N and Z flags based on new AC value
-                next_state = S_SWPX_2;
-            end
-            S_SWPX_2: begin
-                x_from_temp = 1;     // Load X from temp (original AC value)
-                x_load = 1;          // Enable X load
-                next_state = S_FETCH_1;
-            end
-
-            // --- SWPY (0x1B) ---
-            // Swap AC and Y: temp = AC; AC = Y; Y = temp (2 cycles)
-            S_SWPY_1: begin
-                swap_temp_load = 1;  // Save AC to temp register
-                y_to_ac = 1;         // Load Y value to AC
-                ac_load = 1;         // Enable AC load
-                nz_load = 1;         // Update N and Z flags based on new AC value
-                next_state = S_SWPY_2;
-            end
-            S_SWPY_2: begin
-                y_from_temp = 1;     // Load Y from temp (original AC value)
-                y_load = 1;          // Enable Y load
-                next_state = S_FETCH_1;
-            end
-
-            // ================================================================
             // INDIRECT ADDRESSING OPERATIONS
             // ================================================================
 
@@ -1630,161 +1545,6 @@ module neander_control (
                 alu_b_sel = 3'b010;   // Select X register as ALU B input
                 ac_load = 1;          // Load result to AC
                 nz_load = 1;          // Update N and Z flags
-                next_state = S_FETCH_1;
-            end
-
-            // ================================================================
-            // COMPARE IMMEDIATE
-            // ================================================================
-
-            // --- CMPI imm (0xE1) ---
-            // Compare AC with immediate value: AC - imm, set flags only (no store)
-            S_CMPI_1: begin
-                addr_sel = 2'b01;     // PC -> REM
-                rem_load = 1;
-                next_state = S_CMPI_2;
-            end
-            S_CMPI_2: begin
-                mem_read = 1;
-                alu_op = 4'b0001;     // SUB operation (for comparison)
-                if (mem_ready) begin
-                    // Set flags based on AC - imm, but DON'T load AC
-                    nz_load = 1;      // Update N and Z flags
-                    c_load = 1;       // Update carry flag
-                    pc_inc = 1;       // Increment PC past immediate
-                    next_state = S_FETCH_1;
-                end else begin
-                    mem_req = 1;
-                    next_state = S_CMPI_2;
-                end
-            end
-
-            // --- MULI imm (0xE2) --- Multiply Immediate: AC = AC * imm
-            // Sequential multiplier: 8 cycles for area efficiency
-            S_MULI_1: begin
-                addr_sel = 2'b01;     // PC -> REM
-                rem_load = 1;
-                next_state = S_MULI_2;
-            end
-            S_MULI_2: begin
-                mem_read = 1;
-                alu_b_sel = 3'b000;   // Select mem_data_in as multiplier
-                if (mem_ready) begin
-                    // Memory ready - start sequential multiplier
-                    mul_start = 1;    // Start the sequential multiplier
-                    pc_inc = 1;       // Increment PC past immediate operand
-                    next_state = S_MULI_WAIT;
-                end else begin
-                    mem_req = 1;
-                    next_state = S_MULI_2;
-                end
-            end
-            S_MULI_WAIT: begin
-                mem_read = 1;         // Keep memory read active to hold multiplier value
-                alu_b_sel = 3'b000;   // Keep mem_data_in as multiplier
-                if (mul_done) begin
-                    // Multiplication complete - load results
-                    alu_op = 4'b1001;     // MUL operation (routes multiplier results through ALU)
-                    ac_load = 1;          // Load result (low byte) into AC
-                    y_load = 1;           // Enable Y register load
-                    mul_to_y = 1;         // Select mul_high as Y input source
-                    nz_load = 1;          // Update N and Z flags
-                    c_load = 1;           // Update carry (overflow indicator)
-                    next_state = S_FETCH_1;
-                end else begin
-                    // Still multiplying - wait
-                    next_state = S_MULI_WAIT;
-                end
-            end
-
-            // --- DIVI imm (0xE3) --- Divide Immediate: AC = AC / imm, Y = AC % imm
-            // Sequential divider: 8 cycles for area efficiency
-            S_DIVI_1: begin
-                addr_sel = 2'b01;     // PC -> REM
-                rem_load = 1;
-                next_state = S_DIVI_2;
-            end
-            S_DIVI_2: begin
-                mem_read = 1;
-                alu_b_sel = 3'b000;   // Select mem_data_in as divisor
-                if (mem_ready) begin
-                    // Memory ready - start sequential divider
-                    div_start = 1;    // Start the sequential divider
-                    pc_inc = 1;       // Increment PC past immediate operand
-                    next_state = S_DIVI_WAIT;
-                end else begin
-                    mem_req = 1;
-                    next_state = S_DIVI_2;
-                end
-            end
-            S_DIVI_WAIT: begin
-                mem_read = 1;         // Keep memory read active to hold divisor value
-                alu_b_sel = 3'b000;   // Keep mem_data_in as divisor
-                if (div_done) begin
-                    // Division complete - load results
-                    alu_op = 4'b1010;     // DIV operation (routes divider results through ALU)
-                    ac_load = 1;          // Load quotient into AC
-                    y_load = 1;           // Enable Y register load
-                    mul_to_y = 1;         // Select remainder as Y input source
-                    nz_load = 1;          // Update N and Z flags
-                    c_load = 1;           // Update carry (division by zero indicator)
-                    next_state = S_FETCH_1;
-                end else begin
-                    // Still dividing - wait
-                    next_state = S_DIVI_WAIT;
-                end
-            end
-
-            // --- DECJNZ addr (0x88) --- Decrement AC and Jump if Not Zero
-            // First decrement AC, then fetch 16-bit address and jump if AC != 0
-            S_DECJNZ_1: begin
-                // Decrement AC: AC = AC - 1
-                alu_op = 4'b0001;     // SUB operation
-                alu_b_sel = 3'b001;   // Select constant 1
-                ac_load = 1;
-                nz_load = 1;
-                c_load = 1;
-                // Setup to fetch address low byte
-                addr_sel = 2'b01;     // PC -> REM
-                rem_load = 1;
-                next_state = S_DECJNZ_2;
-            end
-            S_DECJNZ_2: begin
-                // Fetch jump address low byte
-                mem_read = 1;
-                if (mem_ready) begin
-                    rdm_load = 1;
-                    pc_inc = 1;
-                    next_state = S_DECJNZ_2B;
-                end else begin
-                    mem_req = 1;
-                    next_state = S_DECJNZ_2;
-                end
-            end
-            S_DECJNZ_2B: begin
-                addr_sel = 2'b01;     // PC -> REM
-                rem_load = 1;
-                next_state = S_DECJNZ_2C;
-            end
-            S_DECJNZ_2C: begin
-                // Fetch jump address high byte
-                mem_read = 1;
-                if (mem_ready) begin
-                    rdm_load_hi = 1;
-                    pc_inc = 1;
-                    next_state = S_DECJNZ_3;
-                end else begin
-                    mem_req = 1;
-                    next_state = S_DECJNZ_2C;
-                end
-            end
-            S_DECJNZ_3: begin
-                // Check if AC is not zero (flagZ was set in S_DECJNZ_1)
-                // If not zero, load PC from RDM
-                if (!flagZ) begin
-                    pc_load = 1;  // PC = RDM (jump to address)
-                end
-                // If zero, PC already incremented past address, continue to fetch
                 next_state = S_FETCH_1;
             end
 
@@ -2576,143 +2336,6 @@ module neander_control (
                 mem_write = 1;
                 if (mem_ready) begin next_state = S_FETCH_1; end
                 else begin mem_req = 1; next_state = S_STA_FP_4; end
-            end
-
-            // ================================================================
-            // B REGISTER EXTENSION INSTRUCTIONS
-            // ================================================================
-
-            // --- TAB (0x1C) ---
-            // Transfer AC to B: B = AC (single cycle)
-            S_TAB: begin
-                b_load = 1;        // Load B from AC (datapath handles mux)
-                next_state = S_FETCH_1;
-            end
-
-            // --- TBA (0x1D) ---
-            // Transfer B to AC: AC = B (single cycle)
-            S_TBA: begin
-                b_to_ac = 1;       // Signal datapath to select B for AC input
-                ac_load = 1;
-                nz_load = 1;       // Update flags based on B value
-                next_state = S_FETCH_1;
-            end
-
-            // --- LDB addr (0x1E) ---
-            // Load B from memory: B = MEM[addr]
-            S_LDB_1: begin
-                addr_sel = 2'b01; rem_load = 1; next_state = S_LDB_2;
-            end
-            S_LDB_2: begin
-                mem_read = 1;
-                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_LDB_2B; end
-                else begin mem_req = 1; next_state = S_LDB_2; end
-            end
-            S_LDB_2B: begin
-                addr_sel = 2'b01; rem_load = 1; next_state = S_LDB_2C;
-            end
-            S_LDB_2C: begin
-                mem_read = 1;
-                if (mem_ready) begin rdm_load_hi = 1; pc_inc = 1; next_state = S_LDB_3; end
-                else begin mem_req = 1; next_state = S_LDB_2C; end
-            end
-            S_LDB_3: begin
-                addr_sel = 2'b00; rem_load = 1; next_state = S_LDB_4;
-            end
-            S_LDB_4: begin
-                mem_read = 1;
-                if (mem_ready) begin b_load = 1; next_state = S_FETCH_1; end
-                else begin mem_req = 1; next_state = S_LDB_4; end
-            end
-
-            // --- STB addr (0x1F) ---
-            // Store B to memory: MEM[addr] = B
-            S_STB_1: begin
-                addr_sel = 2'b01; rem_load = 1; next_state = S_STB_2;
-            end
-            S_STB_2: begin
-                mem_read = 1;
-                if (mem_ready) begin rdm_load = 1; pc_inc = 1; next_state = S_STB_2B; end
-                else begin mem_req = 1; next_state = S_STB_2; end
-            end
-            S_STB_2B: begin
-                addr_sel = 2'b01; rem_load = 1; next_state = S_STB_2C;
-            end
-            S_STB_2C: begin
-                mem_read = 1;
-                if (mem_ready) begin rdm_load_hi = 1; pc_inc = 1; next_state = S_STB_3; end
-                else begin mem_req = 1; next_state = S_STB_2C; end
-            end
-            S_STB_3: begin
-                addr_sel = 2'b00; rem_load = 1; next_state = S_STB_4;
-            end
-            S_STB_4: begin
-                mem_write = 1;
-                mem_data_sel_ext = 3'b101;  // Select B as data source
-                if (mem_ready) begin next_state = S_FETCH_1; end
-                else begin mem_req = 1; next_state = S_STB_4; end
-            end
-
-            // --- INB (0x36) ---
-            // Increment B: B = B + 1 (single cycle)
-            S_INB: begin
-                b_inc = 1;         // Increment B register
-                next_state = S_FETCH_1;
-            end
-
-            // --- DEB (0x37) ---
-            // Decrement B: B = B - 1 (single cycle)
-            S_DEB: begin
-                b_dec = 1;         // Decrement B register
-                next_state = S_FETCH_1;
-            end
-
-            // --- SWPB (0x38) ---
-            // Swap AC and B: temp = AC; AC = B; B = temp (2 cycles)
-            S_SWPB_1: begin
-                swap_temp_load = 1;  // Save AC to temp register
-                b_to_ac = 1;         // Load B value to AC
-                ac_load = 1;         // Enable AC load
-                nz_load = 1;         // Update N and Z flags based on new AC value
-                next_state = S_SWPB_2;
-            end
-            S_SWPB_2: begin
-                b_from_temp = 1;     // Load B from temp (original AC value)
-                b_load = 1;          // Enable B load
-                next_state = S_FETCH_1;
-            end
-
-            // --- ADDB (0x39) ---
-            // Add B to AC: AC = AC + B (single cycle)
-            S_ADDB: begin
-                alu_op = 4'b0000;     // ADD operation
-                alu_b_sel = 3'b100;   // Select B register as ALU B input
-                ac_load = 1;          // Load result to AC
-                nz_load = 1;          // Update N and Z flags
-                c_load = 1;           // Update carry flag
-                next_state = S_FETCH_1;
-            end
-
-            // --- SUBB (0x3A) ---
-            // Subtract B from AC: AC = AC - B (single cycle)
-            S_SUBB: begin
-                alu_op = 4'b0001;     // SUB operation
-                alu_b_sel = 3'b100;   // Select B register as ALU B input
-                ac_load = 1;          // Load result to AC
-                nz_load = 1;          // Update N and Z flags
-                c_load = 1;           // Update carry flag
-                next_state = S_FETCH_1;
-            end
-
-            // --- LDBI imm (0xE4) --- (16-bit immediate)
-            // Load B with immediate: B = imm (16-bit)
-            S_LDBI_1: begin
-                addr_sel = 2'b01; rem_load = 1; next_state = S_LDBI_2;
-            end
-            S_LDBI_2: begin
-                mem_read = 1;
-                if (mem_ready) begin b_load = 1; pc_inc_2 = 1; next_state = S_FETCH_1; end
-                else begin mem_req = 1; next_state = S_LDBI_2; end
             end
 
             // ================================================================

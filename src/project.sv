@@ -87,7 +87,6 @@ module tt_um_cpu_leonardoaraujosantos (
   wire [15:0] dbg_x;
   wire [15:0] dbg_y;
   wire [15:0] dbg_fp;
-  wire [15:0] dbg_b;
 
   // ============================================================================
   // Interconnect Hub <-> SPI Memory Controller Interface
@@ -119,7 +118,6 @@ module tt_um_cpu_leonardoaraujosantos (
   // Peripheral Outputs
   // ============================================================================
   wire        pwm_out;
-  wire        timer_out;
   wire [1:0]  ext_out;
 
   // ============================================================================
@@ -151,8 +149,7 @@ module tt_um_cpu_leonardoaraujosantos (
     .dbg_sp(dbg_sp),
     .dbg_x(dbg_x),
     .dbg_y(dbg_y),
-    .dbg_fp(dbg_fp),
-    .dbg_b(dbg_b)
+    .dbg_fp(dbg_fp)
   );
 
   // ============================================================================
@@ -199,9 +196,6 @@ module tt_um_cpu_leonardoaraujosantos (
 
     // PWM output
     .pwm_out(pwm_out),
-
-    // Timer output
-    .timer_out(timer_out),
 
     // External I/O
     .ext_in(ext_in),
@@ -253,7 +247,7 @@ module tt_um_cpu_leonardoaraujosantos (
   assign uo_out[0] = pwm_out;              // PWM output
   assign uo_out[1] = ext_out[0];           // EXT_OUT0
   assign uo_out[2] = ext_out[1];           // EXT_OUT1
-  assign uo_out[3] = timer_out;            // Timer output
+  assign uo_out[3] = 1'b0;                  // Timer removed (was timer_out)
   assign uo_out[4] = spi_periph_cs_n[2];   // CS_UART (from spi_periph, index 2)
   assign uo_out[5] = spi_periph_cs_n[3];   // CS_ETH  (from spi_periph, index 3)
   assign uo_out[6] = spi_periph_cs_n[1];   // CS_DAC  (from spi_periph, index 1)
@@ -277,6 +271,6 @@ module tt_um_cpu_leonardoaraujosantos (
   // Unused signals
   // ============================================================================
   wire _unused = &{ena, ui_in[7:4], uio_in[7:3], uio_in[1:0],
-                   dbg_ac, dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_b, dbg_pc, 1'b0};
+                   dbg_ac, dbg_ri, dbg_sp, dbg_x, dbg_y, dbg_fp, dbg_pc, 1'b0};
 
 endmodule

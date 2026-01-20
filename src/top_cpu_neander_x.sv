@@ -28,7 +28,6 @@ module cpu_top (
     output logic [15:0] dbg_sp,
     output logic [15:0] dbg_x,     // 16-bit X register debug output
     output logic [15:0] dbg_y,     // 16-bit Y register debug output
-    output logic [15:0] dbg_b,     // 16-bit B register debug output
     output logic [15:0] dbg_fp     // 16-bit FP register debug output
 );
 
@@ -58,12 +57,6 @@ module cpu_top (
     logic       y_to_ac;         // Transfer Y to AC (TYA)
     logic       indexed_mode_y;  // Use indexed addressing (addr + Y)
     logic       mul_to_y;        // Load Y with MUL high byte
-    // B Register Extension signals
-    logic       b_load;          // Load B register
-    logic       b_inc;           // Increment B register
-    logic       b_dec;           // Decrement B register (DEB)
-    logic       b_to_ac;         // Transfer B to AC (TBA)
-    logic       b_from_temp;     // Load B from swap temp (for SWPB)
     // Frame Pointer Extension signals
     logic       fp_load;         // Load FP full 16-bit (for TSF)
     logic       fp_load_lo;      // Load FP low byte (for POP_FP)
@@ -125,12 +118,6 @@ module cpu_top (
         .y_to_ac(y_to_ac),
         .indexed_mode_y(indexed_mode_y),
         .mul_to_y(mul_to_y),
-        // B Register Extension signals
-        .b_load(b_load),
-        .b_inc(b_inc),
-        .b_dec(b_dec),
-        .b_to_ac(b_to_ac),
-        .b_from_temp(b_from_temp),
         // Frame Pointer Extension signals
         .fp_load(fp_load),
         .fp_load_lo(fp_load_lo),
@@ -175,7 +162,6 @@ module cpu_top (
         .dbg_sp(dbg_sp),
         .dbg_x(dbg_x),
         .dbg_y(dbg_y),
-        .dbg_b(dbg_b),
         .dbg_fp(dbg_fp)
     );
 
@@ -222,12 +208,6 @@ module cpu_top (
         .y_to_ac(y_to_ac),
         .indexed_mode_y(indexed_mode_y),
         .mul_to_y(mul_to_y),
-        // B Register Extension signals
-        .b_load(b_load),
-        .b_inc(b_inc),
-        .b_dec(b_dec),
-        .b_to_ac(b_to_ac),
-        .b_from_temp(b_from_temp),
         // Frame Pointer Extension signals
         .fp_load(fp_load),
         .fp_load_lo(fp_load_lo),
